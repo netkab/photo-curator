@@ -19,16 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
----
-
-THIRD-PARTY COMPONENTS
-
-gp-extension/vendor/gptk/  —  Google Photos Toolkit
-    Copyright (c) 2024 xob0t
-    MIT License. Source: https://github.com/xob0t/Google-Photos-Toolkit
-    Full licence text in gp-extension/vendor/gptk/LICENSE
-
-Model weights downloaded at setup (OpenCLIP, InsightFace, Real-ESRGAN, GFPGAN,
-Florence-2) are distributed by their respective authors under their own
-licences and are not covered by this licence.

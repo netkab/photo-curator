@@ -209,15 +209,11 @@ Key docs: [CLAUDE.md](CLAUDE.md) (architecture + safety invariants) ·
 
 ## Credits and licence
 
-MIT — see [LICENSE](LICENSE).
-
-Builds on [Google-Photos-Toolkit](https://github.com/xob0t/Google-Photos-Toolkit) by **xob0t** (MIT),
-vendored in `gp-extension/vendor/gptk/`, which encodes the request shapes for Google Photos' internal
-API. The approach of driving that API from an extension was pioneered by
+MIT — see [LICENSE](LICENSE). Third-party components and their own licences are listed in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), including
+[Google-Photos-Toolkit](https://github.com/xob0t/Google-Photos-Toolkit) by **xob0t** (vendored, MIT)
+and the extension approach pioneered by
 [google-photos-deduper](https://github.com/mtalcott/google-photos-deduper) by **mtalcott**.
-
-Also uses: OpenCLIP · InsightFace · Real-ESRGAN · GFPGAN · Florence-2 · Ollama · PySceneDetect ·
-ffmpeg.
 
 ---
 
