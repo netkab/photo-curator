@@ -1,0 +1,200 @@
+/* Photo Curator extension app page. Dark by default — it sits next to Google Photos' dark UI. */
+
+:root {
+  --bg: #14161a;
+  --panel: #1c1f26;
+  --panel-2: #232733;
+  --line: #2e3441;
+  --text: #e6e9ef;
+  --muted: #9aa3b2;
+  --accent: #6ea8fe;
+  --danger: #e0604f;
+  --ok: #4caf7d;
+  --warn: #d8a24a;
+  --radius: 10px;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+/* ── top bar ─────────────────────────────────────────────────────────────── */
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 0 20px;
+  height: 56px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+
+.brand { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+.brand .logo { color: var(--accent); font-size: 18px; }
+
+.tabs { display: flex; gap: 4px; flex: 1; }
+
+.tab {
+  padding: 7px 14px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  cursor: pointer;
+}
+.tab:hover { background: var(--panel-2); color: var(--text); }
+.tab.active { background: var(--accent); color: #10131a; font-weight: 600; }
+.tab:disabled { opacity: .4; cursor: not-allowed; }
+
+.status { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; }
+
+.dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); flex: none; }
+.dot.ok { background: var(--ok); }
+.dot.bad { background: var(--danger); }
+.dot.warn { background: var(--warn); }
+
+/* ── layout ──────────────────────────────────────────────────────────────── */
+main { padding: 24px; max-width: 1180px; margin: 0 auto; }
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 18px;
+  margin-bottom: 16px;
+}
+
+.card h2 { margin: 0 0 4px; font-size: 16px; }
+.card .sub { color: var(--muted); margin: 0 0 16px; font-size: 13px; }
+
+.row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.row.end { justify-content: flex-end; }
+.spacer { flex: 1; }
+
+/* ── buttons ─────────────────────────────────────────────────────────────── */
+button {
+  padding: 8px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+button:hover:not(:disabled) { border-color: var(--accent); }
+button:disabled { opacity: .45; cursor: not-allowed; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #10131a; font-weight: 600; }
+button.danger { background: var(--danger); border-color: var(--danger); color: #fff; font-weight: 600; }
+button.ghost { background: transparent; }
+button.small { padding: 4px 9px; font-size: 12px; }
+/* "Trash all" — destructive beyond the normal flow (the keeper goes too). Outlined rather than
+   filled so it reads as deliberate and never sits next to the primary action looking alike. */
+button.wipe { background: transparent; border-color: var(--danger); color: var(--danger); }
+button.wipe:hover:not(:disabled) { background: var(--danger); color: #fff; }
+
+label.check { display: flex; align-items: center; gap: 7px; color: var(--muted); cursor: pointer; }
+input[type="number"], select {
+  padding: 7px 9px; border-radius: 8px; border: 1px solid var(--line);
+  background: var(--panel-2); color: var(--text); font: inherit;
+}
+
+/* ── stats ───────────────────────────────────────────────────────────────── */
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+
+.stat { background: var(--panel-2); border-radius: var(--radius); padding: 14px; }
+.stat .k { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+.stat .v { font-size: 24px; font-weight: 600; margin-top: 4px; }
+.stat .n { color: var(--muted); font-size: 12px; margin-top: 2px; }
+.stat.good .v { color: var(--ok); }
+.stat.warn .v { color: var(--warn); }
+.stat.bad  .v { color: var(--danger); }
+
+/* ── progress ────────────────────────────────────────────────────────────── */
+.bar { height: 7px; background: var(--panel-2); border-radius: 999px; overflow: hidden; margin: 10px 0 6px; }
+.bar > i { display: block; height: 100%; background: var(--accent); transition: width .3s; }
+.bar.done > i { background: var(--ok); }
+.bar.paused > i { background: var(--warn); }
+.bar.err > i { background: var(--danger); }
+
+.log {
+  max-height: 190px; overflow-y: auto; margin-top: 12px; padding: 10px;
+  background: #0f1116; border: 1px solid var(--line); border-radius: 8px;
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 12px; color: var(--muted);
+}
+.log div { padding: 1px 0; }
+.log div.err { color: var(--danger); }
+.log div.ok { color: var(--ok); }
+
+/* ── duplicate groups ────────────────────────────────────────────────────── */
+.groups { display: flex; flex-direction: column; gap: 12px; }
+
+.group {
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 14px;
+}
+.group.blocked { opacity: .6; }
+
+.group-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.group-head .date { font-weight: 600; }
+
+.pill {
+  padding: 2px 9px; border-radius: 999px; font-size: 11px;
+  background: var(--panel-2); color: var(--muted); border: 1px solid var(--line);
+}
+.pill.ok { color: var(--ok); border-color: var(--ok); }
+.pill.bad { color: var(--warn); border-color: var(--warn); }
+
+.tiles { display: flex; gap: 12px; flex-wrap: wrap; }
+
+.tile { width: 168px; }
+.tile img {
+  width: 168px; height: 168px; object-fit: cover;
+  border-radius: 8px; background: var(--panel-2); display: block;
+  border: 3px solid transparent;
+}
+.tile.keep img { border-color: var(--ok); }
+.tile.del img  { border-color: var(--danger); }
+/* Not in Google Photos any more — usually already deleted. Dim it so the eye skips to the tiles
+   that can actually be acted on, but keep it legible; it still explains why the group is blocked. */
+.tile.dead img { border-style: dashed; filter: grayscale(1); opacity: .45; }
+.tile.dead .tag { opacity: .5; }
+
+.tile .cap { font-size: 11px; color: var(--muted); margin-top: 5px; word-break: break-all; }
+.tile .cap.gone { color: var(--warn); font-style: italic; }
+.tile .tag { font-size: 11px; font-weight: 700; letter-spacing: .05em; }
+.tile.keep .tag { color: var(--ok); }
+.tile.del  .tag { color: var(--danger); }
+.tile a { color: var(--accent); text-decoration: none; font-size: 11px; }
+.tile a:hover { text-decoration: underline; }
+
+/* ── misc ────────────────────────────────────────────────────────────────── */
+.empty { text-align: center; padding: 48px 20px; color: var(--muted); }
+.hint {
+  padding: 12px 14px; border-radius: 8px; font-size: 13px;
+  background: rgba(110, 168, 254, .09); border: 1px solid rgba(110, 168, 254, .3);
+}
+.hint.warn { background: rgba(216, 162, 74, .1); border-color: rgba(216, 162, 74, .35); }
+.hint.danger { background: rgba(224, 96, 79, .1); border-color: rgba(224, 96, 79, .35); }
+
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); }
+th { color: var(--muted); font-weight: 500; font-size: 12px; }
+td.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+.toast {
+  position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%);
+  background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px;
+  padding: 11px 18px; z-index: 100; max-width: 620px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, .45);
+}
+.toast.err { border-color: var(--danger); }
+.toast.ok { border-color: var(--ok); }

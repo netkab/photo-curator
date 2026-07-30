@@ -1,0 +1,37 @@
+# --- Core API ---
+fastapi>=0.110
+uvicorn[standard]>=0.29
+sqlalchemy>=2.0
+python-dotenv>=1.0
+pydantic>=2.6
+requests>=2.31
+
+# --- Image / metadata (CPU, always needed) ---
+pillow>=10.2
+opencv-python>=4.9
+imagehash>=4.3
+numpy>=1.26
+ffmpeg-python>=0.2
+
+# --- Video scene detection ---
+scenedetect>=0.6
+
+# --- Google (read-only Places + appendonly upload) ---
+google-api-python-client>=2.120
+google-auth-oauthlib>=1.2
+
+# === GPU / heavy models — uncomment OR let setup-models.ps1 install them with the CUDA 11.8 index.
+# The core packages above are enough to start the API server. GPU packages are needed only for
+# analyze/enhance/dedup-clip/video pipelines. ===
+#
+# torch --index-url https://download.pytorch.org/whl/cu118
+# torchvision --index-url https://download.pytorch.org/whl/cu118
+# transformers>=4.40          # Florence-2 OCR/captions
+# einops timm                 # Florence-2 deps
+# onnxruntime-gpu>=1.17       # InsightFace runtime
+# insightface>=0.7            # face detect + embed
+# scikit-learn>=1.4           # face clustering
+# open-clip-torch>=2.24       # CLIP near-duplicate embeddings
+# realesrgan>=0.3             # upscaling
+# gfpgan>=1.3                 # face restoration
+# paddleocr paddlepaddle-gpu  # OCR fallback

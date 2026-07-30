@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Photo Curator — Google Photos</title>
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">◆</span>
+      <span>Photo Curator</span>
+    </div>
+    <nav class="tabs" id="tabs"></nav>
+    <div class="status" id="status">
+      <span class="dot" id="dot-backend" title="Photo Curator backend"></span>
+      <span id="status-text">Connecting…</span>
+    </div>
+  </header>
+
+  <main id="view"></main>
+
+  <div class="toast" id="toast" hidden></div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

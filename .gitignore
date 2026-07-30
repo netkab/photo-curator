@@ -1,0 +1,52 @@
+# ── Secrets ─────────────────────────────────────────────────────────────────
+# Never commit: Google Places API key, Photos OAuth client id/secret.
+backend/.env
+*.local
+# Cached OAuth token — grants upload access to your Google Photos.
+**/google-photos-token.json
+
+# ── Your photo library and everything derived from it ───────────────────────
+# catalog.db holds filenames, GPS coordinates, captions, OCR text and face
+# embeddings for every photo you own; thumbnails/ and derived/ are the images
+# themselves. None of it belongs in a repo.
+backend/data/
+!backend/data/.gitkeep
+*.db
+*.db-journal
+*.db-wal
+*.db.bak-*
+
+# ── Run logs (contain personal filenames and paths) ─────────────────────────
+*.log
+*.err
+scripts/extract-progress.*
+
+# ── Python ──────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# ── Model weights (large, re-downloadable) ──────────────────────────────────
+backend/weights/
+*.onnx
+*.pth
+*.safetensors
+
+# ── Node / Vite ─────────────────────────────────────────────────────────────
+node_modules/
+frontend/dist/
+.vite/
+
+# ── Build output ────────────────────────────────────────────────────────────
+scripts/*.exe
+
+# ── OS / editor ─────────────────────────────────────────────────────────────
+Thumbs.db
+.DS_Store
+desktop.ini
+.idea/
+.vscode/
+*.swp

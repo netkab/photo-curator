@@ -1,0 +1,39 @@
+{
+  "manifest_version": 3,
+  "name": "Photo Curator — Google Photos Bridge",
+  "version": "2.0",
+  "description": "Acts on your Google Photos library using Photo Curator's local analysis: library sync, duplicate trashing with undo, and in-grid highlighting.",
+  "permissions": ["storage", "tabs"],
+  "host_permissions": [
+    "https://photos.google.com/*",
+    "http://localhost:8077/*"
+  ],
+  "background": {
+    "service_worker": "background/worker.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "Open Photo Curator"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://photos.google.com/*"],
+      "js": ["content/bridge.js", "content/inject.js", "panel/panel.js"],
+      "css": ["panel/panel.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "main/gptk-shim.js",
+        "main/commands.js",
+        "vendor/gptk/google-photos-toolkit.user.js"
+      ],
+      "matches": ["https://photos.google.com/*"]
+    }
+  ],
+  "icons": {
+    "48": "icon48.png"
+  }
+}
