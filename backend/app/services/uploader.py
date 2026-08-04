@@ -9,12 +9,14 @@ instead (the user uploads manually).
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from ..config import settings
 
 SCOPES = ["https://www.googleapis.com/auth/photoslibrary.appendonly"]
 _TOKEN = "google-photos-token.json"
+_ALBUM_CACHE = "google-photos-album.json"
 _API = "https://photoslibrary.googleapis.com/v1"
 
 
@@ -62,32 +64,23 @@ def _session():
     return authed
 
 
-def _find_album(session, title: str) -> str | None:
-    """Look up an existing album by title (paginated) so repeated uploads share one album instead of
-    minting a new "Photo Curator (curated)" copy every call."""
-    page_token = None
-    while True:
-        params = {"pageSize": 50}
-        if page_token:
-            params["pageToken"] = page_token
-        resp = session.get(f"{_API}/albums", params=params)
-        resp.raise_for_status()
-        data = resp.json()
-        for album in data.get("albums", []):
-            if album.get("title") == title:
-                return album["id"]
-        page_token = data.get("nextPageToken")
-        if not page_token:
-            return None
-
-
 def _ensure_album(session, title: str) -> str:
-    existing = _find_album(session, title)
-    if existing:
-        return existing
+    """Reuse the album created by a previous upload instead of minting a new "Photo Curator
+    (curated)" copy every call. Cached locally rather than looked up via ``albums.list`` — the
+    ``appendonly`` scope can create and append to albums but cannot list or read them
+    (``ACCESS_TOKEN_SCOPE_INSUFFICIENT`` / 403), so there is no API-side way to ask "does this
+    already exist"."""
+    cache_path = settings.data_dir / _ALBUM_CACHE
+    if cache_path.exists():
+        cached = json.loads(cache_path.read_text())
+        if cached.get("title") == title and cached.get("id"):
+            return cached["id"]
+
     resp = session.post(f"{_API}/albums", json={"album": {"title": title}})
     resp.raise_for_status()
-    return resp.json()["id"]
+    album_id = resp.json()["id"]
+    cache_path.write_text(json.dumps({"title": title, "id": album_id}))
+    return album_id
 
 
 def upload_files(paths: list[Path], album_title: str | None = None) -> dict:

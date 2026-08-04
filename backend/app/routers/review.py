@@ -80,7 +80,13 @@ def apply(action_id: int, db: Session = Depends(db_dependency)) -> dict:
     elif a.kind == "upload":
         path = settings.derived_dir / payload["path"]
         if uploader.enabled():
-            result = uploader.upload_files([path])
+            try:
+                result = uploader.upload_files([path])
+            except Exception as exc:
+                # Surface the real Google API error instead of letting it fall through as a bare,
+                # non-JSON 500 — that previously made a real failure (e.g. a scope problem) look to
+                # the client like the backend was unreachable.
+                raise HTTPException(502, f"Google Photos upload failed: {exc}") from exc
             d = db.get(DerivedMedia, payload.get("derived_id"))
             if d:
                 d.status = "uploaded"

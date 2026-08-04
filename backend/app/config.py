@@ -90,10 +90,22 @@ class Settings:
     # per scene), so a huge bucket would never finish. Clips are sampled evenly across the event.
     highlight_max_clips_per_cluster: int = field(
         default_factory=lambda: int(os.getenv("HIGHLIGHT_MAX_CLIPS_PER_CLUSTER", "40")))
-    # Length (s) of each picked moment in a reel. Long single-shot clips are trimmed to this around
-    # the sampled frame, so one clip can't dominate and 6 moments ≈ a 30s reel.
+    # Ceiling (s) on any one picked moment in a reel — a small event still gets a generous slice per
+    # clip. For a multi-clip event this shrinks toward highlight_min_clip_seconds as clip count grows
+    # (see highlight_target_seconds), so a big day still fits every clip in without hitting this cap.
     highlight_clip_seconds: float = field(
         default_factory=lambda: float(os.getenv("HIGHLIGHT_CLIP_SECONDS", "5")))
+    # Floor (s) on a picked moment — every source clip in a multi-clip event is guaranteed at least
+    # one moment of at least this length, no matter how many clips the event has.
+    highlight_min_clip_seconds: float = field(
+        default_factory=lambda: float(os.getenv("HIGHLIGHT_MIN_CLIP_SECONDS", "2")))
+    # Soft total reel duration (s) a multi-clip event aims for: per-clip moment length is
+    # target/clip_count (clamped to [min, ceiling]) so the reel scales gracefully with event size
+    # instead of a fixed moment-count cap silently dropping clips from big events. It's a soft target,
+    # not a hard cap — coverage (every clip gets ≥1 moment) always wins, so a very large event can
+    # still run longer than this once every clip is at the floor length.
+    highlight_target_seconds: float = field(
+        default_factory=lambda: float(os.getenv("HIGHLIGHT_TARGET_SECONDS", "90")))
     # How off-orientation clips fit the reel canvas: "blur" (whole clip over a blurred fill — no bars,
     # nothing cropped), "crop" (fill by centre-cropping), or "pad" (letterbox with black bars).
     highlight_fit_mode: str = field(default_factory=lambda: os.getenv("HIGHLIGHT_FIT_MODE", "blur"))

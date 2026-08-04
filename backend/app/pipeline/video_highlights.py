@@ -235,6 +235,16 @@ def run(top_scenes_per_cluster: int = 6, solo_min_seconds: float | None = None,
         for key, members in clusters.items():
             if should_cancel and should_cancel():
                 break
+            # Multi-clip events size each picked moment adaptively: target/clip_count, clamped to
+            # [min_clip_seconds, clip_seconds]. A 6-clip day still gets the full 5s ceiling per clip;
+            # a 40-clip day shrinks toward the 2s floor instead of some clips getting dropped. Solo
+            # mode (one long clip trimmed to its best scenes) is unaffected — it always uses the ceiling.
+            if len(members) > 1:
+                adaptive_seconds = max(settings.highlight_min_clip_seconds,
+                                       min(clip_seconds, settings.highlight_target_seconds / len(members)))
+            else:
+                adaptive_seconds = clip_seconds
+
             scored: list[tuple[float, str, float, float, str | None]] = []  # (score, src, start, end, phash)
             with tempfile.TemporaryDirectory() as td:
                 for v in members:
@@ -247,9 +257,9 @@ def run(top_scenes_per_cluster: int = 6, solo_min_seconds: float | None = None,
                         if end - start < 1.0:
                             continue
                         mid = (start + end) / 2
-                        # Trim the picked moment to clip_seconds around the sampled frame so a long
-                        # single-shot clip contributes a short highlight, not its whole length.
-                        win = min(end - start, clip_seconds)
+                        # Trim the picked moment around the sampled frame so a long single-shot clip
+                        # contributes a short highlight, not its whole length.
+                        win = min(end - start, adaptive_seconds)
                         hs, he = max(start, mid - win / 2), min(end, mid + win / 2)
                         frame = Path(td) / f"f_{v.id}_{int(mid)}.jpg"
                         subprocess.run(["ffmpeg", "-y", "-ss", str(mid), "-i", v.abs_path,
@@ -265,21 +275,45 @@ def run(top_scenes_per_cluster: int = 6, solo_min_seconds: float | None = None,
                 # otherwise we'd just re-stitch the whole video with no trimming.
                 if len(members) == 1 and len(scored) <= top_scenes_per_cluster:
                     continue
-                # Pick best-first with diversity: at most 2 moments per source clip (a solo reel is
-                # exempt — all its moments come from the one clip), and skip moments that look
-                # near-identical to one already picked (repeated shots of the same subject).
-                clip_cap = top_scenes_per_cluster if len(members) == 1 else 2
+
                 picks: list[tuple[float, str, float, float, str | None]] = []
                 per_clip: dict[str, int] = {}
-                for cand in sorted(scored, key=lambda c: c[0], reverse=True):
-                    if len(picks) >= top_scenes_per_cluster:
-                        break
-                    if per_clip.get(cand[1], 0) >= clip_cap:
-                        continue
-                    if any(_phash_close(cand[4], p[4]) for p in picks):
-                        continue
-                    picks.append(cand)
-                    per_clip[cand[1]] = per_clip.get(cand[1], 0) + 1
+                if len(members) == 1:
+                    # Solo clip: unchanged — pick the top N distinct-enough scenes from the one clip.
+                    for cand in sorted(scored, key=lambda c: c[0], reverse=True):
+                        if len(picks) >= top_scenes_per_cluster:
+                            break
+                        if any(_phash_close(cand[4], p[4]) for p in picks):
+                            continue
+                        picks.append(cand)
+                else:
+                    # Multi-clip: every clip is guaranteed its single best-scoring moment first — this
+                    # is the "nothing missed" guarantee, independent of clip count. Any remaining soft
+                    # duration budget then goes to bonus 2nd moments (richness cap unchanged at 2 per
+                    # clip), richest-scoring first, same near-duplicate skip as before.
+                    best_per_clip: dict[str, tuple] = {}
+                    for cand in scored:
+                        cur = best_per_clip.get(cand[1])
+                        if cur is None or cand[0] > cur[0]:
+                            best_per_clip[cand[1]] = cand
+                    picks = list(best_per_clip.values())
+                    per_clip = {c[1]: 1 for c in picks}
+                    used_seconds = sum(c[3] - c[2] for c in picks)
+
+                    guaranteed = set(picks)
+                    bonus_candidates = sorted(
+                        (c for c in scored if c not in guaranteed and per_clip.get(c[1], 0) < 2),
+                        key=lambda c: c[0], reverse=True,
+                    )
+                    for cand in bonus_candidates:
+                        if used_seconds >= settings.highlight_target_seconds:
+                            break
+                        if any(_phash_close(cand[4], p[4]) for p in picks):
+                            continue
+                        picks.append(cand)
+                        per_clip[cand[1]] = per_clip.get(cand[1], 0) + 1
+                        used_seconds += cand[3] - cand[2]
+
                 if not picks:
                     continue
                 # chronological order within the reel

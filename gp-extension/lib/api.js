@@ -99,6 +99,7 @@ export const videoRetireSources = (derivedId, mediaIds, dryRun = false) =>
   post(`/api/videos/${derivedId}/retire-sources`, { media_ids: mediaIds, dry_run: dryRun });
 export const videoHighlights = () => post("/api/videos/highlights");
 export const videoCompress = () => post("/api/videos/compress");
+export const videoReset = () => post("/api/videos/reset");
 
 // ── maps ────────────────────────────────────────────────────────────────────
 export const mapsClusters = () => get("/api/maps/clusters");
