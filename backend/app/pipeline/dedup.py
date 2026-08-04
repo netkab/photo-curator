@@ -213,12 +213,20 @@ def cleanup(apply: bool = False, max_group_size: int | None = None) -> dict:
     }
 
 
+def _pick_keeper(scored: dict[int, "quality.Signals"], candidate_ids: list[int]) -> int:
+    """Highest-scoring *eligible* candidate. See ``quality._mark_eligibility`` for why eligibility
+    is a hard gate rather than just another weighted signal."""
+    eligible = [mid for mid in candidate_ids if scored[mid].eligible]
+    pool = eligible or candidate_ids
+    return max(pool, key=lambda mid: scored[mid].score)
+
+
 def _persist_group(s, method: str, members: list[int], by_id, face_counts) -> None:
     rows = [by_id[mid] for mid in members]
     faces_by_media = _faces_for(s, members)
     scored = quality.score_group(rows, faces_by_media)
 
-    keeper = max(members, key=lambda mid: scored[mid].score)
+    keeper = _pick_keeper(scored, members)
     g = DupGroup(method=method, keeper_media_id=keeper,
                  keeper_reason=scored[keeper].reason or None)
     s.add(g)
@@ -263,7 +271,8 @@ def rescore(progress: Callable[[float, str], None] | None = None) -> dict:
                 continue
 
             scored = quality.score_group(rows, _faces_for(s, member_ids))
-            best = max(rows, key=lambda m: scored[m.id].score)
+            best_id = _pick_keeper(scored, [m.id for m in rows])
+            best = next(m for m in rows if m.id == best_id)
 
             for mem in g.members:
                 if mem.media_id in scored:

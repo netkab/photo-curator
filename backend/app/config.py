@@ -59,6 +59,15 @@ class Settings:
     # bulk run would bin hundreds of distinct photos to keep one.
     dedup_max_group_size: int = field(
         default_factory=lambda: int(os.getenv("DEDUP_MAX_GROUP_SIZE", "25")))
+    # A duplicate-group member below this fraction of the group's largest resolution is disqualified
+    # from being chosen as keeper, no matter how it scores on sharpness or anything else. Verified
+    # against 63 real groups: junk copies (Picasa-era thumbnails, Google Motion-Photo GIF previews,
+    # phone screenshots of a photo) top out around 16% of the real photo's resolution, while
+    # legitimately-smaller-but-real photos start around 29% — 25% sits cleanly in that gap. Without
+    # this floor, a 20 KB 364x273 thumbnail out-scored a 2.2 MB 10 MP camera original on raw
+    # sharpness and was picked as the keeper.
+    dedup_keeper_min_resolution_ratio: float = field(
+        default_factory=lambda: float(os.getenv("DEDUP_KEEPER_MIN_RESOLUTION_RATIO", "0.25")))
     portrait_face_ratio: float = 0.10      # face area / image area >= this => "portrait"
     # Sum of ALL faces' area / image area >= this => a person/group is the subject (Maps Studio).
     # Higher than portrait_face_ratio since it's a sum across possibly several faces, not just one.

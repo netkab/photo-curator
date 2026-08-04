@@ -118,7 +118,10 @@ def link(body: LinkBody | None = None) -> dict:
 def status(db: Session = Depends(db_dependency)) -> dict:
     """Coverage report: how much of the live library we can actually act on."""
     gp_total = db.query(GpItem).filter(GpItem.trashed.is_(False)).count()
-    linked = db.query(GpItem).filter(GpItem.media_id.isnot(None)).count()
+    # Both filtered to trashed=False: "linked" is a subset of "currently live", and once real trash
+    # runs started completing, an unfiltered `linked` (which kept counting items trashed via this
+    # tool) could exceed `gp_total`, producing a negative gp_only and >100% coverage.
+    linked = db.query(GpItem).filter(GpItem.media_id.isnot(None), GpItem.trashed.is_(False)).count()
     catalog_total = db.query(Media).count()
 
     by_method = dict(

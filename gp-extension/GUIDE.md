@@ -135,8 +135,12 @@ cd "C:\photo-curator\backend" ; .\.venv\Scripts\python -m app.cli dedup
 Green-bordered tile = **KEEP**. Red-bordered = **TRASH**. Each shows filename, dimensions and
 capture time, with a link to open it in Google Photos.
 
-The keeper was auto-picked by resolution and sharpness. To override, click **Keep this one instead**
-under a different tile — they swap.
+The keeper is auto-picked by a weighted score across sharpness, resolution, compression, and — once
+you've run the face-analysis pass — face clarity, subject size, and centering. Each card shows *why*
+it won (e.g. "sharpest · best centred"). A photo well below the group's largest resolution, or a GIF
+when a real photo is present, can never be picked as keeper no matter how it scores — that guard
+exists because raw sharpness alone can be fooled by a thumbnail or a Google Motion-Photo preview. To
+override, click **Make keeper** under a different tile — they swap.
 
 ### The badge on each group
 

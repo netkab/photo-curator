@@ -87,7 +87,8 @@ def _gp_status() -> dict:
     s = get_session()
     try:
         gp_total = s.query(func.count(GpItem.id)).filter(GpItem.trashed.is_(False)).scalar() or 0
-        linked = s.query(func.count(GpItem.id)).filter(GpItem.media_id.isnot(None)).scalar() or 0
+        linked = s.query(func.count(GpItem.id)).filter(
+            GpItem.media_id.isnot(None), GpItem.trashed.is_(False)).scalar() or 0
         catalog_total = s.query(func.count(Media.id)).scalar() or 0
         by_method = dict(s.query(GpItem.match_method, func.count(GpItem.id))
                          .group_by(GpItem.match_method).all())

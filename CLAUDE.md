@@ -59,6 +59,12 @@ cd "C:\photo-curator\backend"
     demands an explicit `media_ids` list — no "retire all" shortcut exists, and nothing is
     pre-selected in the UI. Retiring is refused until the derived file's status is `uploaded`.
     (`compressed` output *is* a 1:1 replacement; `highlight` is a montage of many clips.)
+11. **A duplicate-group keeper must clear a resolution floor — score alone is not enough.**
+    `pipeline/quality.py` disqualifies any member below `DEDUP_KEEPER_MIN_RESOLUTION_RATIO` (25%)
+    of the group's largest resolution from ever being chosen as keeper, and disqualifies `.gif`
+    files whenever a non-gif alternative exists. Without this, a thumbnail or a Google Motion-Photo
+    GIF preview could out-score the full photo it was generated from on raw sharpness and become the
+    keeper — verified on 63 real groups before the fix. See the dedup skill's Keeper Selection note.
 
 ## Layout
 
@@ -68,6 +74,16 @@ cd "C:\photo-curator\backend"
 | Frontend (review UI) | `frontend/` | React + Vite + TypeScript |
 | Setup / ops scripts | `scripts/` | PowerShell |
 | Working data (gitignored) | `backend/data/` | catalog.db, thumbnails/, derived/, exports/ |
+
+**Public repo**: [github.com/shivarya/photo-curator](https://github.com/shivarya/photo-curator) (MIT).
+Since 2026-08-04 this code is published — **never hard-code a personal path or account name into
+anything under version control.** `_path_fix.py` derives tool locations from `Path.home()` /
+`%LOCALAPPDATA%` (with a `PC_TOOL_DIRS` override), not a literal `C:\Users\<name>\...`; the launcher
+(`scripts/PhotoCurator.cs`) resolves its root from where the .exe sits, not a baked-in path. Third-
+party licences are in `THIRD_PARTY_NOTICES.md`, kept separate from `LICENSE` so GitHub's licence
+detector matches it (an appended notice made it show "Other" instead of "MIT"). `.gitignore` excludes
+`backend/.env`, `backend/data/` (the whole catalog + thumbnails + face embeddings), `*.log`/`*.err`
+(run logs contain personal filenames), and the cached OAuth token.
 
 ## Claude Code skills (`.claude/skills/`)
 
@@ -138,6 +154,12 @@ cd "C:\photo-curator\backend" ; .\.venv\Scripts\python -m app.cli video --compre
   moves redundant local duplicates to `QUARANTINE_DIR` (default: a sibling of `TAKEOUT_DIR` — keep it
   on the same drive so the move is atomic rather than a 10 GB copy). Manifests in `exports/` make
   every run undoable.
+- **Keeper scoring** (`pipeline/quality.py`): picks the best photo *within* a duplicate group by
+  weighted, group-relative signals (sharpness, resolution, detail, and — once the face pass has run —
+  face clarity/size/centering), stamping a human-readable `keeper_reason` onto `DupGroup`. Gated by a
+  hard resolution-floor eligibility check (safety rule #11) so a thumbnail or GIF preview can never
+  outrank the real photo it was scored against. `dedup --rescore` re-applies current scoring to
+  existing groups without re-detecting anything.
 
 ## Key API endpoints (non-obvious)
 
@@ -201,8 +223,10 @@ cd "C:\photo-curator\backend" ; .\.venv\Scripts\python -m app.cli video --compre
   `delete_checklist_<id>.txt` all show capture date sorted, so originals are easy to find in GP by date.
 - **`backend/data/` is gitignored** and can grow large. Originals live in the Takeout folder;
   catalog stores absolute paths.
-- **PATH fix**: `app/_path_fix.py` injects known tool dirs at startup so exiftool/ffmpeg/Ollama are
-  found even when uvicorn inherits a stale PATH from the launch terminal.
+- **PATH fix**: `app/_path_fix.py` injects common tool dirs at startup so exiftool/ffmpeg/Ollama are
+  found even when uvicorn inherits a stale PATH from the launch terminal. Derived from `Path.home()`
+  and standard install roots (with a `PC_TOOL_DIRS` override) — **not** a hard-coded path, since this
+  repo is public (see Layout).
 - **CORS**: `allow_origins=["*"]` (local-only app; needed for Chrome extension's HTTPS→HTTP fetch).
   `Access-Control-Allow-Private-Network: true` added for Chrome PNA restrictions.
 - **Ollama model name**: `moondream` (not `moondream2` — renamed). Set `CAPTION_MODEL=moondream`.
@@ -215,6 +239,18 @@ cd "C:\photo-curator\backend" ; .\.venv\Scripts\python -m app.cli video --compre
   inside each worker thread so Windows won't sleep mid-job (display may still turn off). Per-thread, so
   it ref-counts across concurrent jobs and auto-releases when the last one ends. No-op on non-Windows.
 - **Library stats** (June 2026): 27,859 photos · 3,696 videos · 11,579 geo-tagged · 8,530 dup groups.
+- **Blur/sharpness must be measured at a fixed, normalized scale, never a photo's native
+  resolution.** OpenCV Laplacian variance is *not* scale-invariant — a small or heavily-downscaled
+  copy can register a *higher* raw variance than a full-resolution photo of the same scene, purely
+  from sampling density. `pipeline/blur.py` scores from the existing 512px thumbnail
+  (`Media.thumb_path`) for exactly this reason; comparing `blur_score` computed on two differently-
+  sized originals is comparing apples to oranges. This is *why* rule #11's resolution floor exists —
+  normalizing the metric alone only fixed ~25% of the real cases found.
+- **`GpItem` "linked" counts must filter `trashed=False`, or coverage numbers go negative.**
+  `media_id IS NOT NULL` matches an item forever, even after it's later trashed via this tool. Once
+  real trash volume accumulates, an unfiltered `linked` count can exceed the (correctly `trashed=
+  False`-filtered) `gp_total`, producing `gp_only < 0` and coverage `> 100%`. Fixed in both
+  `GET /api/gp/status` and `cli gp-status` — if you touch either query again, keep both filters.
 
 ## Chrome Extension (`gp-extension/`) — v2
 

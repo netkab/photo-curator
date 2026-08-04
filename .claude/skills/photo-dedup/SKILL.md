@@ -105,10 +105,37 @@ Oversized groups (> `DEDUP_MAX_GROUP_SIZE`, default 25) are flagged `blocked_rea
 never `actionable`, and excluded from both bulk approve and `trash-all`. Cleanup only *reports* them
 — a full `dedup` re-run rebuilds them correctly.
 
+## Keeper selection (`pipeline/quality.py`)
+
+Rewritten 2026-08-04 — the old formula (`megapixels + sharpness/100 + 0.5*faces`) let resolution
+silently decide almost every group, since a 12 MP photo scored 12 on that term alone. It now scores
+**relatively within each group** (each signal normalised 0..1 across the group's own members, then
+weighted — sharpness, resolution, detail/compression, and when faces are present: face clarity,
+subject size, centering) and stores a short **`keeper_reason`** ("sharpest · best centred") so a
+group can be accepted at a glance instead of eyeballed. Re-scoring an existing catalog is cheap —
+`dedup --rescore` reads no image files — so improving this scorer or running the face pass never
+requires re-detecting duplicates.
+
+**A weighted score alone is not trustworthy — there is a hard eligibility floor underneath it.**
+Verified against 63 real duplicate groups: raw Laplacian-variance sharpness is not scale-invariant,
+so a tiny thumbnail or a Google Motion-Photo GIF preview could score as "sharpest" and beat a full
+photo it was generated from. One case: a 20 KB, 364×273 Picasa-era thumbnail out-scored a 2.2 MB,
+10 MP camera original. Two fixes, both required (normalizing alone only flipped ~25% of cases):
+- **Blur is scored from the existing 512px thumbnail**, not the native-resolution original
+  (`pipeline/blur.py`) — makes sharpness comparable across differently-sized copies, and is far
+  cheaper (2 min for 27.5k photos vs. decoding every original).
+- **A member below `DEDUP_KEEPER_MIN_RESOLUTION_RATIO` (default 0.25) of the group's largest
+  resolution can never be chosen as keeper**, regardless of score — junk tops out ~16% of the real
+  photo's resolution, legitimate-but-smaller photos start ~29%, so 25% sits cleanly in the gap.
+  `.gif` files are separately disqualified whenever a non-gif alternative exists in the group (Google
+  Motion-Photo previews). Both have a safety-net fallback (consider everyone eligible) for the edge
+  case of an all-junk or all-gif group, so a keeper is always chosen.
+- Net effect on this library: 63 → 26 groups where a smaller/lower-res photo beat a bigger one: the
+  remaining 26 are legitimate close calls between two substantial photos (2–17 MP each), not junk.
+
 ## Notes
 
 - Groups are sorted by **keeper photo date, newest first** (like Google Photos timeline).
-- Keeper is auto-picked: highest `resolution × sharpness × face_count` score.
 - Thresholds configurable in `app/config.py`: `PHASH_MAX_DISTANCE` (default 6), `CLIP_SIMILARITY` (default 0.92).
 - Current library: ~8,500 dup groups — but after reconcile expect **roughly half to close as already
   resolved**. Report the reconciled number, not the raw one; the raw count badly overstates the work.

@@ -17,6 +17,8 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 
+from ..config import settings
+
 # Weights when the group has usable face data (someone is the subject).
 _W_FACES = {
     "face_quality": 0.30,   # detector confidence — clean, frontal, unobstructed
@@ -41,6 +43,10 @@ class Signals:
     norm: dict[str, float] = field(default_factory=dict)
     score: float = 0.0
     reason: str = ""
+    # Can this member legitimately be chosen as keeper? A weighted score alone isn't enough — a tiny
+    # thumbnail, a Google Motion-Photo GIF preview, or a screenshot of a photo can out-score a full
+    # photo on sharpness yet be a categorically worse copy to keep. See score_group().
+    eligible: bool = True
 
 
 def _mp(m) -> float | None:
@@ -149,8 +155,39 @@ def score_group(members: list, faces_by_media: dict[int, list],
             s.score += 0.15
             s.raw["original_quality"] = True
 
+    _mark_eligibility(out, members)
     _explain(out, weights, any_faces)
     return out
+
+
+def _mark_eligibility(out: dict[int, Signals], members: list) -> None:
+    """Disqualify members that no weighted score should be allowed to override.
+
+    Verified against 63 real duplicate groups: a 364x273 Picasa-era thumbnail (20 KB) out-scored a
+    3648x2736 camera original (2.2 MB) on raw sharpness and was picked as the keeper. Google
+    Motion-Photo GIF previews did the same to the JPEGs they were generated from. Resolution is a
+    hard floor here, not just one more weighted signal, precisely because sharpness alone cannot
+    reliably tell "genuinely crisp thumbnail" from "genuinely detailed full-resolution photo."
+    """
+    pixels = {m.id: (m.width or 0) * (m.height or 0) for m in members}
+    max_px = max(pixels.values(), default=0)
+    names = {m.id: (m.rel_name or "").lower() for m in members}
+    has_non_gif = any(not n.endswith(".gif") for n in names.values())
+    floor = settings.dedup_keeper_min_resolution_ratio
+
+    any_eligible = False
+    for m in members:
+        ratio = (pixels[m.id] / max_px) if max_px else 1.0
+        is_gif = names[m.id].endswith(".gif")
+        eligible = ratio >= floor and not (is_gif and has_non_gif)
+        out[m.id].eligible = eligible
+        any_eligible = any_eligible or eligible
+
+    # Safety net: if literally nothing clears the bar (e.g. every member is a GIF, or the group is
+    # itself all thumbnail-sized), fall back to considering everyone rather than picking no keeper.
+    if not any_eligible:
+        for s in out.values():
+            s.eligible = True
 
 
 _LABEL = {
@@ -164,10 +201,19 @@ _LABEL = {
 
 
 def _explain(out: dict[int, Signals], weights: dict[str, float], any_faces: bool) -> None:
-    """Give the winner a short human reason, so a user can accept or override at a glance."""
+    """Give the winner a short human reason, so a user can accept or override at a glance.
+
+    Must pick "winner" the same way the caller picks the keeper — from eligible candidates only.
+    ``_mark_eligibility`` runs first and guarantees at least one member has ``eligible=True`` (via
+    its own fallback), so this filter can never come up empty. Using the raw score max here instead
+    would explain a *different* photo than the one actually chosen whenever the top raw score
+    belongs to a disqualified thumbnail or GIF — exactly the cases eligibility exists to override —
+    leaving the real keeper's `.reason` at its unset default and `keeper_reason` NULL in the DB.
+    """
     if not out:
         return
-    winner = max(out.values(), key=lambda s: s.score)
+    pool = [s for s in out.values() if s.eligible] or list(out.values())
+    winner = max(pool, key=lambda s: s.score)
     wins = [k for k in weights if s_leads(out, k, winner.media_id)]
     wins.sort(key=lambda k: -weights[k])
 
