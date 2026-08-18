@@ -65,17 +65,23 @@ def reset_clusters() -> dict:
     return {"deleted": n}
 
 
-def reverse_geocode(limit: int | None = None, force: bool = False,
+def reverse_geocode(limit: int | None = None, force: bool = False, media_ids: list[int] | None = None,
                     should_cancel: Callable[[], bool] | None = None,
                     progress: Callable[[float, str], None] | None = None) -> dict:
     """Reverse-geocode GPS to place names. ``limit`` caps how many photos are looked up — pass a small
-    value (e.g. 5–10) for a quick Places-API sample before committing to the whole library. Stops
-    cooperatively when ``should_cancel`` returns True."""
+    value (e.g. 5–10) for a quick Places-API sample before committing to the whole library. ``media_ids``
+    scopes the run to specific rows instead of the whole library — each call costs a real Places API
+    request against a quota, so a caller that just touched a known, bounded set of rows (e.g. a
+    metadata backfill) should pass those ids rather than sweeping everything with ``place_name`` still
+    unset, which could be a much larger, unrelated backlog. Stops cooperatively when ``should_cancel``
+    returns True."""
     tagged = 0
     with session_scope() as s:
         q = s.query(Media).filter(Media.gps_lat.isnot(None), Media.gps_lng.isnot(None))
         if not force:
             q = q.filter(Media.place_name.is_(None))
+        if media_ids is not None:
+            q = q.filter(Media.id.in_(media_ids))
         if limit:
             q = q.limit(limit)
         rows = q.all()
@@ -92,6 +98,9 @@ def reverse_geocode(limit: int | None = None, force: bool = False,
                 m.place_id = place.get("place_id")
                 m.place_name = place.get("name")
                 tagged += 1
+            if i % 50 == 0:
+                s.commit()  # incremental, resume-friendly — an abrupt kill loses at most one batch,
+                            # not every Places API call made so far in this run
     if progress:
         progress(1.0, "Reverse-geocoding complete")
     return {"placed": tagged}

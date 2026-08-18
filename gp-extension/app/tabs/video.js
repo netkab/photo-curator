@@ -23,6 +23,11 @@ export async function videoTab(root, ctx) {
   let rows = [];
   let busy = false;
   let page = 0;
+  // derived_id of the card currently mid-upload or mid-retire — drives the in-progress bar/button
+  // text for that specific card. No byte-level progress is available from either backend call (both
+  // are a single blocking request), so this is deliberately an indeterminate indicator, not a percent.
+  let uploadingId = null;
+  let retiringId = null;
   // Each card's source-clip grid triggers one thumbnail fetch per clip — with hundreds of pending
   // reels that's thousands of requests at once and the tab bogs down. Paginate what's rendered.
   const PAGE_SIZE = 5;
@@ -101,6 +106,8 @@ export async function videoTab(root, ctx) {
     const prev = previewing(r.derived_id);
     const isReel = r.kind === "highlight";
     const uploaded = r.status === "uploaded";
+    const uploading = uploadingId === r.derived_id;
+    const retiring = retiringId === r.derived_id;
     const liveSel = r.sources.filter((s) => sel.has(s.id) && s.live).length;
     const freed = r.sources.filter((s) => sel.has(s.id)).reduce((n, s) => n + (s.bytes || 0), 0);
 
@@ -115,21 +122,33 @@ export async function videoTab(root, ctx) {
         h("span.spacer"),
         r.status === "pending" && h("button.small.primary", {
           disabled: busy, onclick: () => approveAndUpload(r),
-        }, r.uploads_enabled ? "Approve & upload" : "Approve (export)"),
+        }, uploading ? "Uploading…" : (r.uploads_enabled ? "Approve & upload" : "Approve (export)")),
         r.status === "approved" && h("button.small.primary", {
           disabled: busy, onclick: () => applyUpload(r),
-        }, "Upload now"),
+        }, uploading ? "Uploading…" : "Upload now"),
         uploaded && h("button.danger.small", {
           disabled: busy || !liveSel,
           title: liveSel ? "" : "Select the source clips you want to retire first.",
           onclick: () => retireSelected(r),
-        }, liveSel ? `Retire ${fmtInt(liveSel)} (${fmtBytes(freed)})` : "Retire sources"),
+        }, retiring ? "Retiring…" : (liveSel ? `Retire ${fmtInt(liveSel)} (${fmtBytes(freed)})` : "Retire sources")),
       ),
+
+      (uploading || retiring) && h("div.bar.indeterminate", h("i")),
+      uploading && h("div.sub", { style: { marginBottom: "4px" } },
+        "Uploading to Google Photos — this can take a few minutes for a large reel…"),
+      retiring && h("div.sub", { style: { marginBottom: "4px" } }, "Moving source clips to the Google Photos bin…"),
 
       h("video", {
         src: `${API}${r.url}`, controls: true, preload: "metadata",
         style: { width: "320px", borderRadius: "8px", background: "#000", display: "block" },
       }),
+
+      uploaded && (r.meta?.product_url
+        ? h("div", { style: { marginTop: "8px" } },
+            h("a.ext-link", { href: r.meta.product_url, target: "_blank", rel: "noreferrer" },
+              "open in Google Photos"))
+        : h("div.cap.gone", { style: { marginTop: "8px" } },
+            "Uploaded before this link was tracked — check the album in Google Photos directly.")),
 
       isReel && h("div.hint.warn", { style: { marginTop: "10px" } },
         h("strong", "This reel is a montage, not a replacement. "),
@@ -275,7 +294,9 @@ export async function videoTab(root, ctx) {
 
   /** Find and apply the queued upload action for this derived file. */
   async function applyUpload(r, quiet = false) {
-    if (!quiet) { busy = true; paint(); }
+    if (!quiet) busy = true;
+    uploadingId = r.derived_id;
+    paint();
     try {
       // A freshly-approved video queues its upload action as "pending" (same as every other review
       // action) — it only becomes "approved" if someone approves it by hand in the Review Queue.
@@ -305,12 +326,16 @@ export async function videoTab(root, ctx) {
       else if (res?.result?.mode === "manual") {
         toast(`Exported to ${res.result.exported_to} — upload it by hand.`, "ok");
       } else {
-        toast("Uploaded. You can now retire the sources it replaces.", "ok");
+        toast("Uploaded — see \"open in Google Photos\" on the card. You can now retire the sources it replaces.", "ok");
       }
       await load();
     } catch (err) {
       toast(String(err.message || err), "err");
-    } finally { if (!quiet) { busy = false; paint(); } }
+    } finally {
+      uploadingId = null;
+      if (!quiet) busy = false;
+      paint();
+    }
   }
 
   async function retireSelected(r) {
@@ -337,6 +362,10 @@ export async function videoTab(root, ctx) {
       if (res.operation_id) {
         toast(`Retiring ${fmtInt(res.scheduled)} clip(s)…`);
         sel.clear();
+        // The actual trash run happens in the background worker, well after this function returns —
+        // retiringId stays set until the op:done/op:error/op:paused event below clears it, so the
+        // card's progress bar reflects the real operation, not just this dispatch call.
+        retiringId = r.derived_id;
         send({ type: "PC_RUN_OP", opId: res.operation_id });
       }
       await load();
@@ -358,8 +387,14 @@ export async function videoTab(root, ctx) {
   }
 
   const off = onWorkerEvent(async (msg) => {
-    if (msg.type === "op:done") { toast("Sources retired.", "ok"); await load(); }
-    else if (msg.type === "op:error" || msg.type === "op:paused") toast(msg.error, "err");
+    if (msg.type === "op:done") { retiringId = null; toast("Sources retired.", "ok"); await load(); }
+    else if (msg.type === "op:error" || msg.type === "op:paused") {
+      // Previously left the card stuck showing its progress bar forever on failure — nothing here
+      // repainted after clearing state.
+      retiringId = null;
+      toast(msg.error, "err");
+      paint();
+    }
   });
 
   render(root,

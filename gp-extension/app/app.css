@@ -125,6 +125,14 @@ input[type="number"], select {
 .bar.paused > i { background: var(--warn); }
 .bar.err > i { background: var(--danger); }
 
+/* No real percentage available for a single blocking upload/retire call — an indeterminate sweep
+   is the honest way to show "still working" without faking precision. */
+.bar.indeterminate > i { width: 35%; animation: bar-sweep 1.1s ease-in-out infinite; }
+@keyframes bar-sweep {
+  0%   { margin-left: -35%; }
+  100% { margin-left: 100%; }
+}
+
 .log {
   max-height: 190px; overflow-y: auto; margin-top: 12px; padding: 10px;
   background: #0f1116; border: 1px solid var(--line); border-radius: 8px;
@@ -175,6 +183,12 @@ input[type="number"], select {
 .tile.del  .tag { color: var(--danger); }
 .tile a { color: var(--accent); text-decoration: none; font-size: 11px; }
 .tile a:hover { text-decoration: underline; }
+
+/* Same treatment as .tile a, for links outside a tile (e.g. a reel's own "open in Google Photos").
+   Without this a plain <a> falls back to the browser default blue/underline, which reads as broken
+   against this dark theme. */
+.ext-link { color: var(--accent); text-decoration: none; font-size: 12px; }
+.ext-link:hover { text-decoration: underline; }
 
 /* ── misc ────────────────────────────────────────────────────────────────── */
 .empty { text-align: center; padding: 48px 20px; color: var(--muted); }

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -13,7 +14,7 @@ from ..config import settings
 from ..db import db_dependency
 from ..jobs import manager
 from ..models import DerivedMedia, GpItem, GpOperation, Media, ReviewAction
-from ..pipeline import metadata as md, video_compress, video_highlights
+from ..pipeline import metadata as md, video_compress, video_highlights, video_metadata_backfill
 from ..services import uploader
 
 router = APIRouter(prefix="/api/videos", tags=["videos"])
@@ -122,6 +123,42 @@ def infer_dates_apply(db: Session = Depends(db_dependency)) -> dict:
             updated += 1
     db.commit()
     return {"updated": updated}
+
+
+@router.get("/backfill-embedded-metadata")
+def backfill_embedded_metadata_preview(sample: int = 20, db: Session = Depends(db_dependency)) -> dict:
+    """Preview (read-only): how many undated/unplaced videos have a capture date and/or GPS embedded
+    in the file itself (e.g. iPhone Live Photo .MP4 companions, whose Takeout sidecar often lacks
+    it). Probes a small sample via ffprobe rather than the whole library, so this stays fast."""
+    rows = db.query(Media).filter(
+        Media.media_type == "video",
+        Media.taken_at.is_(None), Media.place_name.is_(None), Media.gps_lat.is_(None),
+    ).all()
+    probed = rows[:sample]
+    dated = geotagged = 0
+    samples = []
+    for m in probed:
+        taken_at, lat, lng = md.read_embedded_datetime_gps(Path(m.abs_path))
+        if taken_at:
+            dated += 1
+        if lat is not None:
+            geotagged += 1
+        samples.append({"id": m.id, "name": m.rel_name,
+                        "date": taken_at.isoformat() if taken_at else None,
+                        "gps": [lat, lng] if lat is not None else None})
+    return {"eligible": len(rows), "probed": len(probed),
+            "probe_dated": dated, "probe_geotagged": geotagged, "samples": samples}
+
+
+@router.post("/backfill-embedded-metadata")
+def backfill_embedded_metadata_apply() -> dict:
+    """Run the full backfill as a background job (probes every eligible video via ffprobe, then
+    reverse-geocodes any newly-found GPS) — pass through /api/jobs/{id} to track progress."""
+    if manager.is_running("video-metadata-backfill"):
+        raise HTTPException(409, "A metadata backfill job is already running")
+    job = manager.submit("video-metadata-backfill", lambda h: video_metadata_backfill.run(
+        progress=lambda p, m: h.update(p, m), should_cancel=lambda: h.cancelled))
+    return job.to_dict()
 
 
 @router.get("/needs-metadata")
@@ -247,13 +284,22 @@ def results(status: str | None = None, db: Session = Depends(db_dependency)) -> 
             if ids:
                 by_id = {m.id: m for m in db.query(Media).filter(Media.id.in_(ids)).all()}
                 sources = [with_gp(_src_brief(by_id[i])) for i in ids if i in by_id]  # reel order
+        # ?v=<mtime> busts the browser cache: reel filenames are deterministic per event, so a
+        # regenerated reel reuses the URL — without this the browser shows the stale old video. Keyed
+        # on the file's own mtime rather than d.id: SQLite reuses rowids when a row is deleted and the
+        # table has no AUTOINCREMENT, so a manually-deleted-then-rebuilt reel can land back on the
+        # exact same id — d.id alone silently fails to bust the cache in that case (hit for real:
+        # 2025-07-26's reel regenerated at 71.7s but the extension kept showing the old cached 29s
+        # cut because both rows happened to get id=2).
+        try:
+            cache_v = int((settings.derived_dir / d.path).stat().st_mtime)
+        except OSError:
+            cache_v = d.id
         out.append({
             "derived_id": d.id,
             "kind": d.kind,
             "status": d.status,
-            # ?v=<id> busts the browser cache: reel filenames are deterministic per event, so a
-            # regenerated reel reuses the URL — without this the browser shows the stale old video.
-            "url": f"/media/derived/{d.path}?v={d.id}",
+            "url": f"/media/derived/{d.path}?v={cache_v}",
             "sources": sources,
             "source_bytes": sum(s.get("bytes") or 0 for s in sources),
             "live_sources": sum(1 for s in sources if s["live"]),

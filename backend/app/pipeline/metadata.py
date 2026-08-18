@@ -123,6 +123,59 @@ def probe_video(path: Path) -> dict[str, Any]:
         return {}
 
 
+_ISO6709_RE = re.compile(r"^([+-]\d+(?:\.\d+)?)([+-]\d+(?:\.\d+)?)")
+
+
+def _parse_iso6709(raw: str) -> tuple[float, float] | None:
+    """Parse a QuickTime/Android ISO 6709 location tag, e.g. ``+13.0065+077.5922+936.588/``, into
+    (lat, lng). Altitude and the trailing CRS slash are ignored."""
+    m = _ISO6709_RE.match(raw.strip())
+    if not m:
+        return None
+    try:
+        return float(m.group(1)), float(m.group(2))
+    except ValueError:
+        return None
+
+
+def read_embedded_datetime_gps(path: Path) -> tuple[datetime | None, float | None, float | None]:
+    """Read a video's own container metadata for capture date + GPS — a fallback for when the Takeout
+    JSON sidecar never carried them. Common for iPhone Live Photo ``.MP4`` companions, which Takeout
+    frequently ships with no matched sidecar even though the file itself has the real camera-original
+    ``creation_time`` and ``com.apple.quicktime.location.ISO6709`` tags baked in. Returns
+    ``(taken_at, lat, lng)`` as naive UTC + floats; any of the three may be ``None``. Requires ffprobe."""
+    if not shutil.which("ffprobe"):
+        return None, None, None
+    try:
+        proc = subprocess.run(
+            ["ffprobe", "-v", "quiet", "-show_entries",
+             "format_tags=creation_time,com.apple.quicktime.location.ISO6709,location",
+             "-of", "json", str(path)],
+            check=True, capture_output=True, text=True,
+        )
+        tags = json.loads(proc.stdout).get("format", {}).get("tags", {}) or {}
+    except Exception:
+        return None, None, None
+
+    taken_at = None
+    raw_dt = tags.get("creation_time")
+    if raw_dt:
+        try:
+            taken_at = (datetime.fromisoformat(raw_dt.replace("Z", "+00:00"))
+                       .astimezone(timezone.utc).replace(tzinfo=None))
+        except ValueError:
+            taken_at = None
+
+    lat = lng = None
+    raw_loc = tags.get("com.apple.quicktime.location.ISO6709") or tags.get("location")
+    if raw_loc:
+        parsed = _parse_iso6709(raw_loc)
+        if parsed:
+            lat, lng = parsed
+
+    return taken_at, lat, lng
+
+
 # --- Timestamp / location preservation for derived files -----------------------------------------
 # A derived photo/video that you upload manually should land at the SAME point in the Google Photos
 # timeline as its original. Google Photos reads the embedded date (EXIF DateTimeOriginal for images,

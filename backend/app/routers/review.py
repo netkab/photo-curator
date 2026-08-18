@@ -90,6 +90,14 @@ def apply(action_id: int, db: Session = Depends(db_dependency)) -> dict:
             d = db.get(DerivedMedia, payload.get("derived_id"))
             if d:
                 d.status = "uploaded"
+                # The product_url Google returns here is otherwise only ever seen once, in this HTTP
+                # response — persist it so the UI can show a permanent "open in Google Photos" link
+                # instead of it being lost the moment the one-time upload toast disappears.
+                uploaded_item = (result.get("uploaded") or [{}])[0]
+                if uploaded_item.get("product_url"):
+                    meta = json.loads(d.meta) if d.meta else {}
+                    meta["product_url"] = uploaded_item["product_url"]
+                    d.meta = json.dumps(meta)
         else:
             dest = settings.exports_dir / "to_upload" / path.name
             dest.parent.mkdir(parents=True, exist_ok=True)
