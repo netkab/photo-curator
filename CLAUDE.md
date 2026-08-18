@@ -52,19 +52,14 @@ cd "C:\photo-curator\backend"
    feature loses photos. Every run writes a manifest and is undoable.
 8. **A blurry original is only retired after its replacement is `uploaded`.** `/api/enhance/
    retire-originals` refuses anything else — trashing before the replacement lands leaves neither.
-9. **Oversized duplicate groups are never bulk-actionable.** Groups above
-   `DEDUP_MAX_GROUP_SIZE` (25) are clustering artifacts, not duplicate sets; `approve-bulk` and
-   `trash-all` both skip them. See the dedup note below.
-10. **A highlight reel is not a replacement for its sources.** `/api/videos/{id}/retire-sources`
-    demands an explicit `media_ids` list — no "retire all" shortcut exists, and nothing is
-    pre-selected in the UI. Retiring is refused until the derived file's status is `uploaded`.
-    (`compressed` output *is* a 1:1 replacement; `highlight` is a montage of many clips.)
-11. **A duplicate-group keeper must clear a resolution floor — score alone is not enough.**
-    `pipeline/quality.py` disqualifies any member below `DEDUP_KEEPER_MIN_RESOLUTION_RATIO` (25%)
-    of the group's largest resolution from ever being chosen as keeper, and disqualifies `.gif`
-    files whenever a non-gif alternative exists. Without this, a thumbnail or a Google Motion-Photo
-    GIF preview could out-score the full photo it was generated from on raw sharpness and become the
-    keeper — verified on 63 real groups before the fix. See the dedup skill's Keeper Selection note.
+9. **Oversized duplicate groups (> `DEDUP_MAX_GROUP_SIZE`, 25) are never bulk-actionable** —
+   clustering artifacts, not duplicate sets. See `photo-dedup` skill's "Repairing groups" section
+   for the full logic.
+10. **A highlight reel is not a replacement for its sources** — `retire-sources` requires an
+    explicit `media_ids` list, no "retire all" shortcut. See `video-process` skill's "Retiring
+    source clips" section for the full guard list.
+11. **A duplicate-group keeper must clear a resolution floor — score alone is not enough.** See
+    `photo-dedup` skill's "Keeper selection" section for the full logic and verified stats.
 
 ## Layout
 
@@ -213,12 +208,11 @@ cd "C:\photo-curator\backend" ; .\.venv\Scripts\python -m app.cli video --compre
 - **Derived files inherit the original's timestamp + GPS.** `metadata.copy_image_timestamp`
   re-injects EXIF DateTimeOriginal/CreateDate/Orientation/GPS into enhanced JPEGs, and video pipelines
   pass `-metadata creation_time=` to ffmpeg. Filesystem mtimes are mirrored too. Requires exiftool.
-- **Dedup clustering is seeded, not chained** (`pipeline/dedup.py`). It used transitive union-find,
-  so A≈B and B≈C grouped A with C — over 28k photos that chained into groups of 687. It now takes the
-  best remaining photo as a seed and claims only what is similar *to that seed*. Layers also run
-  strongest-first over the still-unassigned photos, because running them independently produced
-  2,280 identical `phash`/`clip` group pairs. Repair old data with `cli dedup --cleanup --apply`;
-  only a full `cli dedup` re-run rebuilds oversized groups properly.
+- **Dedup clustering is seeded, not chained** (`pipeline/dedup.py`) — old transitive union-find
+  could chain unrelated photos into one mega-group; it now seeds a group from the best remaining
+  photo and claims only what's similar to that seed. Repair old data with
+  `cli dedup --cleanup --apply`. See `photo-dedup` skill's "Repairing groups" section for the full
+  history and stats.
 - **Dates are surfaced for manual cleanup.** Duplicates UI, Delete Helper, and
   `delete_checklist_<id>.txt` all show capture date sorted, so originals are easy to find in GP by date.
 - **`backend/data/` is gitignored** and can grow large. Originals live in the Takeout folder;
@@ -238,14 +232,13 @@ cd "C:\photo-curator\backend" ; .\.venv\Scripts\python -m app.cli video --compre
 - **Sleep during long jobs**: `jobs.py` calls `SetThreadExecutionState(ES_CONTINUOUS|ES_SYSTEM_REQUIRED)`
   inside each worker thread so Windows won't sleep mid-job (display may still turn off). Per-thread, so
   it ref-counts across concurrent jobs and auto-releases when the last one ends. No-op on non-Windows.
-- **Library stats** (June 2026): 27,859 photos · 3,696 videos · 11,579 geo-tagged · 8,530 dup groups.
+- **Library stats** (June 2026, approximate — drifts; see individual skills for their own
+  batch-sizing figures): 27,859 photos · 3,696 videos · 11,579 geo-tagged · 8,530 dup groups.
 - **Blur/sharpness must be measured at a fixed, normalized scale, never a photo's native
-  resolution.** OpenCV Laplacian variance is *not* scale-invariant — a small or heavily-downscaled
-  copy can register a *higher* raw variance than a full-resolution photo of the same scene, purely
-  from sampling density. `pipeline/blur.py` scores from the existing 512px thumbnail
-  (`Media.thumb_path`) for exactly this reason; comparing `blur_score` computed on two differently-
-  sized originals is comparing apples to oranges. This is *why* rule #11's resolution floor exists —
-  normalizing the metric alone only fixed ~25% of the real cases found.
+  resolution** — OpenCV Laplacian variance isn't scale-invariant, so `pipeline/blur.py` scores from
+  the existing 512px thumbnail rather than the original. This is also why rule #11's resolution
+  floor exists — normalizing the metric alone doesn't catch every case. See `photo-dedup` skill's
+  "Keeper selection" section for the full reasoning and stats.
 - **`GpItem` "linked" counts must filter `trashed=False`, or coverage numbers go negative.**
   `media_id IS NOT NULL` matches an item forever, even after it's later trashed via this tool. Once
   real trash volume accumulates, an unfiltered `linked` count can exceed the (correctly `trashed=
@@ -257,9 +250,9 @@ cd "C:\photo-curator\backend" ; .\.venv\Scripts\python -m app.cli video --compre
 How to use it: [gp-extension/GUIDE.md](gp-extension/GUIDE.md). Install + troubleshooting:
 [gp-extension/INSTALL.md](gp-extension/INSTALL.md). Highlights and traps only here.
 
-- **Install**: `chrome://extensions` → Developer mode → Load unpacked → `gp-extension/`.
-  Requires the backend on `http://localhost:8077` **and** an open, signed-in `photos.google.com` tab —
-  every Google call rides that tab's own session.
+- **Install**: see `photo-setup`/`photo-dev` skill for install steps. Requires the backend on
+  `http://localhost:8077` **and** an open, signed-in `photos.google.com` tab — every Google call
+  rides that tab's own session.
 - **Layout**: `app/` tab page (Sync + Duplicates tabs) · `background/worker.js` executor ·
   `content/` bridge + injector · `main/` MAIN-world command handler · `panel/` in-grid overlay ·
   `vendor/gptk/` pinned third-party API layer. No build step; plain ES modules.
@@ -287,8 +280,8 @@ How to use it: [gp-extension/GUIDE.md](gp-extension/GUIDE.md). Install + trouble
 - **Images**: local thumbnails go through the service worker (`GET_IMAGE`) to dodge the HTTPS→HTTP
   mixed-content block; Google's own HTTPS `thumb_url` is preferred where available (append
   `=w256-h256-k-no` to size it and drop the auth requirement).
-- **After updates**: reload via `chrome://extensions` → ↻, **and reload any open photos.google.com
-  tab** — existing tabs keep running the old content script.
+- **After updates**: see `photo-setup`/`photo-dev` skill for reload steps — an already-open
+  photos.google.com tab keeps running the old content script.
 - **`batchexecute` is undocumented and Google can change it without notice.** GPTK is pinned to a
   release for that reason, and `healthCheck` (reads `WIZ_global_data`) is the cheap canary. After any
   GPTK upgrade, re-run a dry run before trusting a real one.
