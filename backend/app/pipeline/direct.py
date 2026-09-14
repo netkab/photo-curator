@@ -57,8 +57,11 @@ def image_features(data: bytes):
             raise ValueError("Thumbnail is too small for analysis")
         if im.width * im.height > MAX_PIXELS:
             raise ValueError("Thumbnail pixel dimensions are too large")
-        if getattr(im, "n_frames", 1) != 1:
-            raise AnimatedPreviewError("Animated images require manual review")
+        # MPO is a multi-picture JPEG container, not a timed animation. Its first
+        # image is the primary still preview; never compare its auxiliary frames.
+        if getattr(im, "n_frames", 1) != 1 and im.format != "MPO":
+            raise AnimatedPreviewError(f"Multi-frame {im.format} preview requires manual review")
+        im.seek(0)
         im = ImageOps.exif_transpose(im).convert("RGB")
         im.thumbnail((512, 512))
         gray = np.asarray(im.convert("L"), dtype=np.float32)
@@ -84,6 +87,8 @@ def catalog_item(s, row: GpItem):
     row.media_id, row.match_method, row.match_score = media.id, "direct", 1.0
 
 def save_thumbnail(media, raw):
+    with Image.open(io.BytesIO(raw)) as image:
+        media.preview_format = image.format
     data, phash, sharp = image_features(raw)
     name = f"gp-{media.sha256}.jpg"
     dest = settings.thumbs_dir / name
@@ -93,6 +98,7 @@ def save_thumbnail(media, raw):
     media.thumb_path, media.phash, media.blur_score = name, phash, sharp
     media.thumbnail_sha256 = hashlib.sha256(data).hexdigest()
     media.analyzed_at = datetime.utcnow()
+    media.preview_skip_reason = None
 
 def analyze(handle, use_clip=False, cached_only=False):
     # Cache one image at a time; each commit survives a stop/restart. No original downloads.
@@ -106,7 +112,7 @@ def analyze(handle, use_clip=False, cached_only=False):
         with session_scope() as s:
             g = s.get(GpItem, gid)
             m = s.get(Media, g.media_id)
-            if not m or m.source != "google-photos-thumbnail" or m.media_type != "photo":
+            if not m or m.source != "google-photos-thumbnail" or m.media_type != "photo" or m.preview_skip_reason:
                 skipped += 1
                 continue
             if m.thumb_path and (settings.thumbs_dir / m.thumb_path).is_file():

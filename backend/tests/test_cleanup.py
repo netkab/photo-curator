@@ -337,4 +337,38 @@ def test_animated_browser_previews_are_excluded_without_stopping_downloads(clien
     assert all(i['media_id']!=item['media_id'] for i in client.get('/api/direct/thumbnail-queue').json()['items'])
     with session_scope() as s:
         m=s.get(Media,item['media_id'])
-        assert m.media_type=='animation' and m.phash is None
+        assert m.media_type=='photo' and m.phash is None
+        assert m.preview_format=='GIF' and m.preview_skip_reason
+
+def test_mpo_preview_uses_primary_still_not_auxiliary_image(client):
+    import base64
+    sync(client)
+    first=Image.open(io.BytesIO(photo())).convert('RGB')
+    out=io.BytesIO()
+    first.save(out,format='MPO',save_all=True,append_images=[Image.new('RGB',first.size,'white')])
+    raw=out.getvalue()
+    with Image.open(io.BytesIO(raw)) as im:
+        assert im.format=='MPO' and im.n_frames==2
+        expected_hash=str(direct.imagehash.phash(im.convert('RGB')))
+    item=client.get('/api/direct/thumbnail-queue').json()['items'][0]
+    r=client.post(f"/api/direct/thumbnails/{item['media_id']}",json={
+        'account':ACCOUNT,'data':base64.b64encode(raw).decode()})
+    assert r.status_code==200 and r.json()['cached']
+    with session_scope() as s:
+        m=s.get(Media,item['media_id'])
+        assert m.phash==expected_hash and m.preview_format=='MPO'
+        assert m.preview_skip_reason is None and m.media_type=='photo'
+
+def test_legacy_animation_classifications_are_requeued_without_losing_cached_images(client):
+    from app.db import init_db
+    sync(client)
+    with session_scope() as s:
+        rows=s.query(Media).order_by(Media.id).all()
+        rows[0].media_type='animation'
+        direct.save_thumbnail(rows[1],photo())
+        cached_id=rows[1].id
+    init_db(); init_db()
+    with session_scope() as s:
+        assert s.query(Media).filter(Media.media_type=='animation').count()==0
+        assert s.get(Media,cached_id).thumb_path
+    assert len(client.get('/api/direct/thumbnail-queue').json()['items'])==2

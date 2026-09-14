@@ -43,6 +43,8 @@ class Media(Base):
 
     source: Mapped[str] = mapped_column(String, default="takeout")
     thumbnail_sha256: Mapped[str | None] = mapped_column(String(64), default=None)
+    preview_format: Mapped[str | None] = mapped_column(String(16), default=None)
+    preview_skip_reason: Mapped[str | None] = mapped_column(String, default=None)
     clip_embedding: Mapped[builtins.bytes | None] = mapped_column(default=None)
 
     # geo (from Takeout sidecar / EXIF — never from the Photos API)

@@ -30,6 +30,8 @@ def _migrate() -> None:
         "media": {
             "source": "TEXT DEFAULT 'takeout'",
             "thumbnail_sha256": "TEXT DEFAULT NULL",
+            "preview_format": "TEXT DEFAULT NULL",
+            "preview_skip_reason": "TEXT DEFAULT NULL",
             "clip_embedding": "BLOB DEFAULT NULL",
             "face_area_ratio": "REAL DEFAULT NULL",
             "archived_at": "TIMESTAMP DEFAULT NULL",
@@ -44,6 +46,10 @@ def _migrate() -> None:
             for col, decl in cols.items():
                 if col not in existing:
                     conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {decl}"))
+        # 3.0.2 confused multi-picture JPEG previews with animated originals.
+        # Requeue only those local classifications; leave cached images and reviews intact.
+        conn.execute(text("UPDATE media SET media_type='photo' "
+                          "WHERE source='google-photos-thumbnail' AND media_type='animation'"))
 
 
 def init_db() -> None:

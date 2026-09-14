@@ -25,6 +25,7 @@ def thumbnail_queue(after: int = Query(0, ge=0), limit: int = Query(50, ge=1, le
     with session_scope() as s:
         rows = (s.query(Media, GpItem).join(GpItem, GpItem.media_id == Media.id)
                 .filter(Media.source == "google-photos-thumbnail", Media.media_type == "photo",
+                        Media.preview_skip_reason.is_(None),
                         GpItem.trashed.is_(False), Media.id > after).order_by(Media.id))
         items = []
         for m, g in rows.yield_per(100):
@@ -54,9 +55,9 @@ def cache_preview(media_id: int, body: PreviewBody):
         try:
             raw = base64.b64decode(body.data, validate=True)
             direct.save_thumbnail(m, raw)
-        except direct.AnimatedPreviewError:
-            m.media_type = "animation"
-            return {"cached": False, "skipped": "animated preview requires manual review"}
+        except direct.AnimatedPreviewError as exc:
+            m.preview_skip_reason = str(exc)
+            return {"cached": False, "skipped": m.preview_skip_reason}
         except (ValueError, binascii.Error) as exc:
             raise HTTPException(400, f"Invalid preview: {exc}") from None
         except OSError as exc:
