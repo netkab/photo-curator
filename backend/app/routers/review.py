@@ -1,14 +1,5 @@
-"""The Review Queue — the single gate for any change.
-
-Every proposed action is `pending` until the user approves it, and only `apply` performs anything:
-  * delete   -> schedules a GpOperation the extension executes (moves to Google's bin, undoable for
-                60 days). Items with no Google Photos link fall back to a manual checklist.
-  * upload   -> uploads the approved NEW file to a dedicated album (if OAuth set) else exports it.
-  * review   -> the package was exported at creation; apply just returns the Maps review URL.
-  * caption  -> marks the caption approved.
-Nothing in this app deletes originals on disk, permanently deletes anything, or posts to Google
-automatically. `apply` on a delete only *schedules* the trash — the extension performs it, and
-`/api/gp/operations/{id}/undo` reverses it.
+"""Approval snapshots exact account/content keys. Applying defaults to a queued dry run.
+Only the extension can execute reviewed trash; no upload or unrelated legacy apply paths exist.
 """
 from __future__ import annotations
 
@@ -20,9 +11,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from ..config import settings
-from ..db import db_dependency
+from ..db import db_dependency, serialized
 from ..models import Caption, DerivedMedia, GpItem, GpOperation, Media, ReviewAction
-from ..services import uploader
+
 
 router = APIRouter(prefix="/api/review", tags=["review"])
 
@@ -50,168 +41,86 @@ def _get(db: Session, action_id: int) -> ReviewAction:
     return a
 
 
+def reviewed_targets(db: Session, a: ReviewAction) -> tuple[str, list[str], list[str]]:
+    """Resolve only reviewed members, protecting every keeper by content key across groups."""
+    if a.kind != "delete":
+        raise HTTPException(400, "Only cleanup trash reviews are enabled")
+    payload = json.loads(a.payload)
+    items = payload.get("items", [])
+    keeper_ids = {payload.get("keeper_media_id")} | {i.get("keeper_media_id") for i in items}
+    keeper_ids.discard(None)
+    if not keeper_ids:
+        raise HTTPException(409, "Cleanup requires a surviving keeper")
+    ids = {i["media_id"] for i in items} - keeper_ids
+    rows = db.query(GpItem).filter(GpItem.media_id.in_(ids | keeper_ids)).all()
+    accounts = {g.account for g in rows}
+    if len(accounts) != 1 or next(iter(accounts)).startswith("/u/"):
+        raise HTTPException(409, "Rescan with the current extension; a stable single account is required")
+    account = next(iter(accounts))
+    keepers = [g for g in rows if g.media_id in keeper_ids and not g.trashed and g.dedup_key]
+    if {g.media_id for g in keepers} != keeper_ids:
+        raise HTTPException(409, "A keeper is missing; review the group again")
+    protected = {g.dedup_key for g in keepers}
+    targets = [g for g in rows if g.media_id in ids and g.dedup_key and not g.trashed]
+    if any(g.is_owned is not True for g in targets):
+        raise HTTPException(409, "Ownership is unknown or shared; inspect these photos manually")
+    keys = list(dict.fromkeys(g.dedup_key for g in targets if g.dedup_key not in protected))
+    if not keys:
+        raise HTTPException(409, "No distinct owned duplicates remain; keepers are protected by content identity")
+    # Every content alias of a target must be reviewed too. Prevent an unselected alias from going.
+    aliases = db.query(GpItem).filter(GpItem.account == account, GpItem.dedup_key.in_(keys),
+                                      GpItem.trashed.is_(False)).all()
+    if any(g.media_id not in ids for g in aliases):
+        raise HTTPException(409, "A selected content key also identifies an unselected photo")
+    return account, keys, sorted(protected)
+
+
 @router.post("/{action_id}/approve")
+@serialized
 def approve(action_id: int, db: Session = Depends(db_dependency)) -> dict:
     a = _get(db, action_id)
+    if a.status != "pending":
+        raise HTTPException(409, f"Action is {a.status}; approval requires a pending review")
+    account, keys, protected = reviewed_targets(db, a)
+    payload = json.loads(a.payload)
+    payload.update(approved_account=account, approved_keys=keys, protected_keys=protected)
+    a.payload = json.dumps(payload)
     a.status = "approved"
     db.commit()
-    return {"id": a.id, "status": a.status}
+    return {"id": a.id, "status": a.status, "count": len(keys)}
 
 
 @router.post("/{action_id}/dismiss")
+@serialized
 def dismiss(action_id: int, db: Session = Depends(db_dependency)) -> dict:
     a = _get(db, action_id)
+    if db.query(GpOperation).filter(GpOperation.review_action_id == a.id,
+                                   GpOperation.status.in_(["running", "pending", "paused"])).first():
+        raise HTTPException(409, "Stop the scheduled operation before dismissing")
     a.status = "dismissed"
     db.commit()
     return {"id": a.id, "status": a.status}
 
 
+from pydantic import BaseModel
+class ApplyBody(BaseModel):
+    dry_run: bool = True
+
+
 @router.post("/{action_id}/apply")
-def apply(action_id: int, db: Session = Depends(db_dependency)) -> dict:
+@serialized
+def apply(action_id: int, body: ApplyBody | None = None, db: Session = Depends(db_dependency)) -> dict:
     a = _get(db, action_id)
-    if a.status not in ("approved", "pending"):
-        raise HTTPException(409, f"action is {a.status}")
-    payload = json.loads(a.payload) if a.payload else {}
-    result: dict = {}
-
-    if a.kind == "delete":
-        result = _apply_delete(db, a, payload)
-
-    elif a.kind == "upload":
-        path = settings.derived_dir / payload["path"]
-        if uploader.enabled():
-            try:
-                result = uploader.upload_files([path])
-            except Exception as exc:
-                # Surface the real Google API error instead of letting it fall through as a bare,
-                # non-JSON 500 — that previously made a real failure (e.g. a scope problem) look to
-                # the client like the backend was unreachable.
-                raise HTTPException(502, f"Google Photos upload failed: {exc}") from exc
-            d = db.get(DerivedMedia, payload.get("derived_id"))
-            if d:
-                d.status = "uploaded"
-                # The product_url Google returns here is otherwise only ever seen once, in this HTTP
-                # response — persist it so the UI can show a permanent "open in Google Photos" link
-                # instead of it being lost the moment the one-time upload toast disappears.
-                uploaded_item = (result.get("uploaded") or [{}])[0]
-                if uploaded_item.get("product_url"):
-                    meta = json.loads(d.meta) if d.meta else {}
-                    meta["product_url"] = uploaded_item["product_url"]
-                    d.meta = json.dumps(meta)
-        else:
-            dest = settings.exports_dir / "to_upload" / path.name
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            if path.exists():
-                import shutil
-
-                shutil.copy2(path, dest)
-            result = {"mode": "manual", "exported_to": str(dest),
-                      "note": "Set PHOTOS_OAUTH_* to enable direct upload to a new album."}
-
-    elif a.kind == "review":
-        result = {"review_url": payload.get("review_url"), "export_dir": payload.get("export_dir"),
-                  "note": "Open the URL and paste the text + attach the exported images manually."}
-
-    elif a.kind == "caption":
-        cap = db.get(Caption, payload.get("caption_id"))
-        if cap:
-            cap.approved = True
-        result = {"caption_id": payload.get("caption_id"), "approved": True}
-
-    # A scheduled trash isn't finished until the extension actually drains it. Leave the action
-    # `approved` so it stays visible and undoable; gp.report_result flips it to `done`.
-    if result.pop("_defer_done", False):
-        a.status = "approved"
-    else:
-        a.status = "done"
-        a.applied_at = datetime.utcnow()
-    db.commit()
-    return {"id": a.id, "status": a.status, "result": result}
-
-
-def _apply_delete(db: Session, a: ReviewAction, payload: dict) -> dict:
-    """Schedule a trash operation for every item we can identify in Google Photos.
-
-    Items linked to a live ``gp_items`` row are trashed by the extension over Google's internal API
-    (recoverable from the bin for 60 days, and undoable in one click). Anything unlinked — typically
-    already deleted, or never uploaded — still gets the date-sorted manual checklist, so no item is
-    silently dropped from the flow.
-    """
-    items = sorted(payload.get("items", []), key=lambda it: it.get("taken_at") or "")
-    media_ids = [it["media_id"] for it in items if it.get("media_id")]
-
-    links: dict[int, GpItem] = {}
-    if media_ids:
-        for g in (db.query(GpItem)
-                  .filter(GpItem.media_id.in_(media_ids),
-                          GpItem.dedup_key.isnot(None),
-                          GpItem.trashed.is_(False))
-                  .all()):
-            links[g.media_id] = g
-
-    # Never trash a keeper, even if a caller wrongly included one in the payload. A bulk action
-    # spans many groups, so the keeper is carried per item; a single-group action has one at the
-    # top level. Honour both.
-    action_keeper = payload.get("keeper_media_id")
-
-    def is_keeper(it: dict) -> bool:
-        return it["media_id"] in (action_keeper, it.get("keeper_media_id"))
-
-    linked = [(it, links[it["media_id"]]) for it in items
-              if it.get("media_id") in links and not is_keeper(it)]
-    unlinked = [it for it in items if it.get("media_id") not in links and not is_keeper(it)]
-
-    result: dict = {"linked": len(linked), "unlinked": len(unlinked)}
-
-    if linked:
-        accounts = {g.account for _, g in linked}
-        if len(accounts) > 1:
-            raise HTTPException(409, f"items span multiple accounts {sorted(accounts)}")
-        # Several media rows can share one dedup_key; collapse so the counts mean something.
-        from .gp import dedupe_keys
-        keys = dedupe_keys([g.dedup_key for _, g in linked])
-        op = GpOperation(
-            op="trash",
-            review_action_id=a.id,
-            account=next(iter(accounts)),
-            payload=json.dumps(keys),
-            total=len(keys),
-            status="pending",
-            results=json.dumps({"succeeded": [], "failed": []}),
-            note=f"{payload.get('reason', 'duplicate')} — review action {a.id}",
-        )
-        db.add(op)
-        db.flush()  # need op.id in the response
-        result["operation_id"] = op.id
-        result["mode"] = "extension"
-        result["_defer_done"] = True
-
-    if unlinked:
-        checklist = settings.exports_dir / f"delete_checklist_{a.id}.txt"
-        lines = [
-            "These items are not linked to a live Google Photos entry, so the extension cannot act",
-            "on them. Run a library sync from the extension first; if they still appear here they",
-            "were most likely already deleted, or never uploaded.",
-            f"Reason: {payload.get('reason', 'duplicate')}",
-            "",
-        ]
-        for it in unlinked:
-            when = (it.get("taken_at") or "unknown date").replace("T", " ")[:19]
-            place = f"  @ {it['place_name']}" if it.get("place_name") else ""
-            lines.append(f"[{when}]{place}  {it['name']}")
-            lines.append(f"           {it['abs_path']}")
-        checklist.write_text("\n".join(lines), encoding="utf-8")
-        result["checklist"] = str(checklist)
-        result.setdefault("mode", "manual")
-
-    return result
-
-
-@router.post("/apply-approved")
-def apply_all_approved(db: Session = Depends(db_dependency)) -> dict:
-    ids = [a.id for a in db.query(ReviewAction).filter(ReviewAction.status == "approved").all()]
-    results = [apply(i, db) for i in ids]
-    return {"applied": len(results), "results": results}
+    if a.status != "approved":
+        raise HTTPException(409, f"Action is {a.status}; explicitly approve it first")
+    body = body or ApplyBody()
+    payload = json.loads(a.payload)
+    from .gp import CreateOpBody, create_operation
+    op = create_operation(CreateOpBody(op="trash", account=payload.get("approved_account", ""),
+                          keys=payload.get("approved_keys", []), review_action_id=a.id,
+                          dry_run=body.dry_run, note=f"Reviewed duplicates — action {a.id}"), db)
+    return {"id": a.id, "status": a.status,
+            "result": {"operation_id": op["id"], "mode": "extension", "dry_run": body.dry_run}}
 
 
 @router.get("/delete-items")

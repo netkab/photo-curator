@@ -1,223 +1,174 @@
-# Photo Curator — find and delete duplicate photos in Google Photos
+# Photo Curator — local Google Photos cleanup
 
-**A free, private, open-source tool that finds duplicate photos in your Google Photos library and
-actually deletes them — in bulk, with one-click undo. Runs entirely on your own computer.**
+A cleanup-focused fork of [shivarya/photo-curator](https://github.com/shivarya/photo-curator).
+Scan Google Photos directly, cache small previews, find duplicate/near-duplicate candidates locally,
+review the keeper, rehearse with a dry run, and optionally move approved photos to Trash with Undo.
+**No Google Takeout export, Google OAuth app, GPU, paid extension, or cloud AI service is required.**
 
-Google Photos has no "find duplicates" button, and its API cannot delete your photos. Photo Curator
-solves both: it compares your **original files** (not compressed thumbnails) to find real duplicates,
-then moves them to the Google Photos bin through a Chrome extension. Nothing is uploaded to a server.
-No subscription. No account to create.
+This is an experimental personal tool using **undocumented Google Photos web APIs**. The adapter is
+derived from the repository's pinned Google Photos Toolkit v3.2.0 integration. Google can change or
+block these APIs without notice. Automated tests use synthetic data; this fork has not been validated
+against a real signed-in library. Start with a small scan and visually inspect the results.
 
-> **Deleted 43,000 photos by accident?** You can't. Everything goes to the Google Photos **bin**,
-> recoverable for 60 days, and every run has an **Undo** button.
+## Setup (macOS, Linux, Windows)
 
----
+Use **Python 3.12**, current Chrome/Chromium, and optionally **Node 22.12+** for the React UI.
+The extension has no build step and includes the entire scan/review/undo workflow; the React UI is optional.
 
-## What it does
+1. Clone your fork:
 
-| | |
-|---|---|
-| 🔍 **Finds duplicates properly** | Three passes: identical files (SHA-256), resized/re-compressed copies (perceptual hash), and near-identical burst shots (CLIP AI). Works on your *original* files, so it catches duplicates that thumbnail-based tools miss. |
-| 🧠 **Picks the best copy for you** | Scores each photo on sharpness, face clarity, whether the subject is centred, resolution and compression — and tells you *why* it chose one ("sharpest · best centred"). |
-| 🗑️ **Deletes in bulk, safely** | Sends duplicates to the Google Photos bin. Resumable, undoable, and it refuses to delete the last remaining copy of anything. |
-| 💾 **Frees disk space** | Moves redundant local copies to a quarantine folder — never deletes, always reversible. |
-| ✨ **Fixes blurry photos** | Upscales and restores them locally (Real-ESRGAN + GFPGAN), then can retire the blurry original. |
-| 📍 **Drafts Google Maps reviews** | Groups your geo-tagged photos by place and writes a review from what's in them. You post it. |
-| 🎬 **Shrinks and highlights videos** | GPU compression to 1080p, plus automatic highlight reels from your clips. |
-
-**Everything runs on your machine.** Your photos, faces and locations never leave it.
-
----
-
-## Is this for you?
-
-✅ You have thousands of photos in Google Photos and lots are duplicates
-✅ You want the duplicates **gone**, not just listed
-✅ You'd rather not upload your family photos to a stranger's server
-✅ You have a Windows PC (an NVIDIA GPU helps but isn't required for de-duplication)
-
-❌ You want a phone app — this is a desktop tool
-❌ You want something that works without any setup — budget about 30 minutes
-
----
-
-## Setup for non-technical users
-
-You'll copy and paste a few commands. You don't need to understand them. **About 30 minutes**, most
-of it waiting for downloads.
-
-### Step 1 — Install two free programs
-
-1. **Python** — <https://www.python.org/downloads/>
-   Click the big yellow download button. **When installing, tick "Add Python to PATH"** on the first
-   screen. This matters; if you miss it, nothing else will work.
-2. **Node.js** — <https://nodejs.org/> → click the **LTS** button, accept all defaults.
-
-### Step 2 — Download Photo Curator
-
-On this page click the green **Code** button → **Download ZIP**. Unzip it somewhere simple like
-`C:\photo-curator`.
-
-*(If you know what git is: `git clone https://github.com/YOUR-USERNAME/photo-curator.git`)*
-
-### Step 3 — Get your photos out of Google
-
-Google won't let any app read your whole library any more, so you export it once:
-
-1. Go to <https://takeout.google.com>
-2. Click **Deselect all**, then scroll down and tick **Google Photos** only
-3. Choose **.zip** and the largest size option, then **Create export**
-4. Google emails you when it's ready — this can take hours or a day for a big library
-5. Download the files and unzip them all into one folder, e.g. `D:\Takeout`
-
-### Step 4 — Run the setup script
-
-Open the `photo-curator` folder, right-click in some empty space, and choose
-**"Open in Terminal"** (or "Open PowerShell window here"). Paste this and press Enter:
-
-```powershell
-.\scripts\setup-models.ps1
-```
-
-This creates a private Python environment and downloads the AI models. It takes a while and prints a
-lot — that's normal. If it reports a missing tool, install it and run the script again.
-
-### Step 5 — Point it at your photos
-
-In the `backend` folder, copy `.env.example` to `.env`, open the copy in Notepad, and set the folder
-you unzipped Takeout into:
-
-```
-TAKEOUT_DIR=D:\Takeout
-```
-
-Save and close. Everything else in that file is optional.
-
-### Step 6 — Start it
-
-```powershell
-.\start.ps1
-```
-
-Two windows open. Then visit **<http://localhost:5177>** in your browser.
-
-### Step 7 — Load the Chrome extension
-
-This is the part that can actually delete photos from Google Photos.
-
-1. In Chrome, go to `chrome://extensions`
-2. Turn on **Developer mode** (top-right)
-3. Click **Load unpacked** and select the `gp-extension` folder
-4. Open <https://photos.google.com>, sign in, and **leave that tab open**
-5. Click the Photo Curator icon in your Chrome toolbar
-
-### Step 8 — Use it
-
-In this order:
-
-1. **Library Sync → Scan library** — connects your Google Photos to the catalogue. *Nothing works
-   until this has run.*
-2. Build the duplicate list (paste into the terminal):
-   ```powershell
-   cd backend ; .\.venv\Scripts\python -m app.cli ingest ; .\.venv\Scripts\python -m app.cli dedup
+   ```sh
+   git clone https://github.com/netkab/photo-curator.git
+   cd photo-curator/backend
+   python3.12 -m venv .venv
+   source .venv/bin/activate
+   python -m pip install -r requirements-cleanup.txt
    ```
-3. **Duplicates tab** → tick **Dry run** and press **Trash duplicates** once. Nothing is deleted; it
-   just proves everything is connected.
-4. Untick Dry run and do it for real. Start with one group.
 
-📖 **[Full walkthrough with screenshots →](gp-extension/GUIDE.md)**
+   On Windows use `py -3.12 -m venv .venv`, then `.\.venv\Scripts\Activate.ps1` instead.
+   The cleanup requirements pin direct and transitive dependencies. They do not yet have artifact hashes.
+   Do not run the legacy GPU/model setup script for this workflow.
 
----
+2. Open `chrome://extensions`, turn on Developer mode, choose **Load unpacked**, and select
+   the repository's **gp-extension** directory. Copy its extension ID.
 
-## Is it safe?
+3. From the activated backend environment, allow that specific extension and display the local token:
 
-This is your photo library, so the rules are strict and enforced in code:
+   ```sh
+   python -m app.setup --extension-id YOUR_32_CHARACTER_EXTENSION_ID
+   python -m uvicorn app.main:app --host 127.0.0.1 --port 8077
+   ```
 
-- **Nothing is ever permanently deleted.** Only "move to bin", which Google keeps for 60 days. The
-  code has an allow-list that makes permanent deletion impossible.
-- **Every run is undoable** with one click, restoring exactly what succeeded.
-- **Your local original files are never touched** — they're only ever read.
-- **It won't delete your last copy.** If a group's keeper is already gone from Google Photos, the
-  whole group is blocked.
-- **Dry run first**, by default, until you've completed one.
-- **Nothing is uploaded or deleted without your approval.**
+   Run **one backend process / one uvicorn worker**. Keep it bound to loopback; never expose it on
+   a LAN or through a tunnel. Setup stores the allowed ID in `backend/.env`. The token is generated
+   in `backend/data/.local-token` (owner read/write on POSIX) and is ignored by Git. Protect the data
+   directory with your OS account permissions on Windows. `python -m app.setup` displays it again.
 
-Your photos are never sent anywhere. All AI runs locally.
+4. Click the Photo Curator extension icon. In **Setup**, paste the token and click **Pair and test
+   connection**. Open exactly one signed-in `photos.google.com` tab. The extension's token stays
+   in trusted extension storage in this Chrome profile; it is not exposed to the Google page.
 
----
+If Chrome requests permission to access the local network, allow it only for this extension.
+No wildcard CORS or Private Network Access response headers are used. A new unpacked extension ID
+requires updating the allowed ID and restarting the backend.
 
-## Frequently asked questions
+### Optional React UI
 
-**Do I need a good graphics card?**
-No for finding duplicates. A GPU (NVIDIA, 8 GB) makes the AI passes much faster — a GTX 1070 handles
-a 28,000-photo library comfortably.
+In a separate terminal:
 
-**Will this delete photos I want to keep?**
-It picks a keeper in each group and only bins the rest, showing you which is which before you
-confirm. You can change the keeper, keep several, or skip a group. And everything is undoable.
-
-**Why do I need the Google Takeout export?**
-Google's API can't read your full library or delete anything (they removed that access in March
-2025). Takeout gives the original files, which is also what makes duplicate detection accurate —
-Google only serves shrunken thumbnails.
-
-**Is this against Google's terms?**
-The extension drives Google Photos' own web interface from your signed-in browser — the same actions
-you could do by hand, just faster. It's your account and your photos. It uses an undocumented
-internal endpoint, so Google could change it at any time and break the tool.
-
-**Does it work on Mac or Linux?**
-The core is Python and runs anywhere, but the helper scripts are Windows PowerShell. Mac/Linux users
-will need to run the commands manually.
-
-**How long does it take?**
-Setup ~30 min. Scanning a 28,000-photo library: a few minutes for the sync, ~2 hours for full AI
-analysis on a GPU. Deleting is about 100 photos a minute.
-
----
-
-## For developers
-
-<details>
-<summary>Architecture, API and pipelines</summary>
-
-**Stack:** Python 3.11 · FastAPI · SQLAlchemy + SQLite · React + Vite + TypeScript · Chrome MV3
-extension (no build step) · PyTorch / open-clip / InsightFace / Real-ESRGAN · ffmpeg.
-
-```
-backend/     FastAPI app, pipelines, SQLite catalog
-frontend/    React review UI (port 5177)
-gp-extension/  Chrome MV3 extension — the only thing that can act on Google Photos
-docs/        Usage notes
+```sh
+cd photo-curator/frontend
+npm ci
+npm run dev
 ```
 
-**How it deletes**, given the Library API cannot: the extension injects a script into
-`photos.google.com` and calls Google's internal `batchexecute` RPC endpoint using the page's own
-session tokens. Mutations key on `dedupKey` (content identity), never `mediaKey`.
+Open `http://127.0.0.1:5177`, paste the same local token, and connect. The UI receives a local
+HttpOnly, SameSite=Strict session cookie, valid for 12 hours or until backend restart. API and cached
+thumbnails are authenticated. Use the extension to scan and execute queued operations.
+`start.ps1` starts both local servers on Windows after dependencies are installed; it refuses occupied
+ports and never kills existing Python/Node processes.
 
-**Resumability:** batch progress lives in SQLite, not the browser. The extension asks the backend for
-the next slice, executes it, and reports back — so closing Chrome mid-run costs at most one batch.
+## Use the cleanup workflow
 
-Key docs: [CLAUDE.md](CLAUDE.md) (architecture + safety invariants) ·
-[gp-extension/GUIDE.md](gp-extension/GUIDE.md) (usage) ·
-[gp-extension/INSTALL.md](gp-extension/INSTALL.md) (install + troubleshooting) ·
-[docs/USAGE.md](docs/USAGE.md).
+1. **Library Sync → Scan / resume library.** The extension reads library + archived-item metadata
+   in pages of up to 500 and saves a durable cursor with each page. Stop at any time. Resume continues
+   from the last committed page. **Rescan from newest** restarts enumeration without erasing the catalog.
+2. **Fetch thumbnails and find duplicates.** Downloads up to 512-pixel previews into the local cache,
+   never original photos or videos. Cached items are skipped on later runs. Failed downloads are counted;
+   rescan to refresh expired URLs, then retry analysis. Stop is cooperative after the current request.
+3. **Duplicates.** Compare each proposed group and keeper, open originals in Google Photos when useful,
+   pick another keeper, or mark additional photos **Keep too**. Dismiss unrelated groups. Each new
+   group has a suggested keeper based on reported original dimensions, then thumbnail sharpness.
+4. **Dry run is always the initial choice.** It exercises account checks, batching and durable result
+   accounting without issuing a mutation. A successful dry run does not disable dry-run mode and does
+   not consume the group's review state.
+5. **Live trash is disabled by the backend by default.** Once you have inspected the results, set
+   `PC_ENABLE_LIVE_TRASH=1` in `backend/.env` and restart. Then explicitly uncheck Dry run and confirm
+   the selected photos in the extension. Approval snapshots the account, selected content keys, and
+   protected keeper keys. An operation cannot reuse that approval for different photos.
+6. **Review queue** preserves proposed/approved selections if a step fails or you close a tab. You can
+   inspect, approve, dismiss, or queue a dry run there. **Duplicates → operation history** shows pending,
+   running, paused and finished operations. Start/Resume requires an explicit click; browser startup
+   never resumes trash automatically. Each mutation batch has at most 25 keys with a 5-second pause.
+7. **Undo** creates a restore operation from the recorded successful keys. Stop an active operation
+   first. Undo remains blocked while a batch has an unknown/in-flight outcome. A tab closure or lost
+   response may require waiting 150 seconds for the lease, then explicitly resuming that idempotent
+   batch so its result can be recorded. Stop prevents future batches; an already-issued batch may finish.
 
-</details>
+**There is no permanent-delete or empty-trash operation.** Undo only works while Google still retains
+those items in Trash; Google may expire them, and manually emptying Trash makes restoration impossible.
+The API's batch response does not prove individual per-item outcomes, so inspect Google Photos after
+real trash/restore runs. This is not a backup service.
 
----
+## What analysis means
 
-## Credits and licence
+- Default: 64-bit perceptual hashes on locally decoded thumbnails, Hamming distance <= 4, compatible
+  aspect ratios, and conservative seed-based groups of at most 25. Five-part hash indexing avoids
+  a full pairwise library comparison. Each candidate is similar to the keeper; similarities do not
+  chain unrelated photos into a giant group.
+- Matching or even byte-identical thumbnails **do not prove that original files are identical**.
+  Preview compression can conceal detail, edits, face expressions and resolution differences.
+  Unknown ownership/shared items are blocked from live trash, and equal Google content keys are
+  not treated as separate removable copies. Reported dimensions and file sizes can be missing.
+- The catalog stores a namespaced remote-identity digest in the legacy `sha256` column for direct
+  items (`source=google-photos-thumbnail`); it is not an original-file hash. `thumbnail_sha256`
+  is a separate digest of the normalized cached preview. Identical previews keep separate catalog rows.
+- Videos are cataloged but excluded from duplicate detection. Animated/unreadable/low-information
+  previews are skipped. No face recognition, originals-based quality scoring, GPS enrichment or
+  storage-savings guarantee is provided by this workflow.
+- One Google account per data directory. The stable `WIZ_global_data.oPEP7c` identity is checked on
+  every scan and mutation. The mutable `/u/0` slot is not an account identity. If that field becomes
+  unavailable, the extension stops. Use a fresh `DATA_DIR` for another account or a pre-fork catalog
+  containing legacy `/u/N` records; legacy operations must not be trusted or silently migrated.
+- A scan is not an atomic snapshot. Missing items are never automatically considered deleted, and
+  the catalog can be stale after changes made outside this tool. Recheck keepers in Google Photos
+  immediately before a real run. Google changes or expiring cursors may require a fresh scan.
+- Cached previews, filenames, account identity and optional embeddings stay on disk unencrypted.
+  Preview URLs can grant access to private images: do not share the catalog, logs or data directory.
+  Downloads go only to allowlisted `lh<number>.googleusercontent.com` hosts over HTTPS, with no
+  redirects, environment proxies, Google cookies, or third-party uploads. URL expiry/auth requirements
+  can prevent downloading some images; they remain cataloged for manual inspection.
 
-MIT — see [LICENSE](LICENSE). Third-party components and their own licences are listed in
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), including
-[Google-Photos-Toolkit](https://github.com/xob0t/Google-Photos-Toolkit) by **xob0t** (vendored, MIT)
-and the extension approach pioneered by
-[google-photos-deduper](https://github.com/mtalcott/google-photos-deduper) by **mtalcott**.
+### Optional local CLIP embeddings
 
----
+The default pHash workflow is sufficient to start. For additional nearby-burst candidates, install
+`requirements-clip.txt` in the backend environment and supply a trusted **local OpenCLIP ViT-B-32**
+checkpoint using `PC_CLIP_CHECKPOINT` in `.env`. Enable the checkbox in Library Sync. The application
+never downloads weights automatically. The first optional run can be slow on CPU; embeddings are
+cached in SQLite. Restart with a fresh embedding cache if you change model weights.
 
-<sub>Keywords: google photos duplicate finder, delete duplicate photos google photos, remove
-duplicates from google photos, google photos cleanup tool, find duplicate photos free, google photos
-deduplicate, bulk delete google photos, google takeout duplicate remover, offline photo organizer,
-local AI photo management, free duplicate photo remover windows.</sub>
+CLIP candidates require cosine similarity >= 0.96, compatible aspect ratio, and capture times within
+120 seconds. Semantic similarity is weak evidence: every group still requires visual review.
+The optional model package is pinned, but its platform-specific Torch dependencies are not fully
+locked. Actual model inference is not part of the automated smoke tests; it needs separate validation
+on your hardware. No GPU or CLIP installation is needed for pHash matching.
+
+## Tests and build
+
+```sh
+cd backend
+python -m pip install -r requirements-test.txt
+python -m pytest -q
+cd ..
+node --test gp-extension/tests/*.test.mjs
+cd frontend
+npm ci
+npm run build
+npm audit
+```
+
+Backend tests cover authentication/CORS/CSRF, persistent scans, account isolation, approval binding,
+keeper aliases, unknown ownership, dry-run defaults, batch leases, result validation, cancellation,
+Undo, thumbnail limits and resumable analysis. JavaScript tests check the pinned RPC shapes, metadata
+parser fixtures, dry-run short-circuits, account changes and rejected commands. These are synthetic
+regression tests, not evidence that today's Google internal API works on your account.
+
+## Scope and upstream code
+
+The existing SQLite catalog, duplicate review UI, keeper selection and durable operation history are
+preserved where useful. Maps reviews, enhancement, uploads, video creation/compression, local-file
+reclaim, and manual/fuzzy Takeout linking are not mounted in the cleanup API or shown in its navigation.
+Their legacy source remains for reference. The old full GPTK userscript and page-message bridge are
+not loaded; a small adapter retains just the required request formats and licensing attribution.
+See [SECURITY.md](SECURITY.md) for the trust boundary and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
+for upstream credits. Existing legacy guides are historical and are not setup instructions for this fork.

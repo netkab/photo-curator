@@ -1,19 +1,7 @@
-/**
- * Duplicates tab — review locally-detected duplicate groups and trash them in Google Photos.
- *
- * The detection itself already happened on the backend against the *original* files on disk
- * (sha256, then perceptual hash, then CLIP). That is strictly better evidence than anything
- * obtainable from the web UI, which only ever sees compressed thumbnails. This tab is the acting
- * half: confirm the keeper, then hand a list of dedup keys to the executor.
- *
- * Two safeguards are load-bearing and deliberately not skippable:
- *   * a group is only actionable when the keeper AND every duplicate resolve to a live Google
- *     Photos item, so a partial trash can't leave the keeper deleted and a duplicate behind;
- *   * the first real run defaults to a dry run.
- */
+/** Review thumbnail-based candidate groups, choose keepers, rehearse, then explicitly trash. */
 import { h, render, fmtInt, fmtDate, send } from "../../lib/dom.js";
 
-const DRY_RUN_KEY = "pc-dry-run-done";
+
 
 export async function dupesTab(root, ctx) {
   const { api, toast, onWorkerEvent } = ctx;
@@ -40,10 +28,7 @@ export async function dupesTab(root, ctx) {
   // the normal case, not an edge case.
   const keepAlso = new Set();
 
-  // Default the dry-run box on until one has actually completed, then remember the choice.
-  const dryRunDone = (await chrome.storage.local.get(DRY_RUN_KEY))[DRY_RUN_KEY] === true;
-  const dryRun = h("input", { type: "checkbox", checked: !dryRunDone });
-
+  const dryRun = h("input", { type: "checkbox", checked: true, onchange: () => paint() });
   // ── thumbnails ────────────────────────────────────────────────────────────
   /**
    * Prefer Google's own HTTPS thumbnail. The local one lives on http://localhost, which this page
@@ -51,13 +36,7 @@ export async function dupesTab(root, ctx) {
    */
   function thumb(item, cls, keptToo = false) {
     const img = h("img", { alt: item.name || "", loading: "lazy", decoding: "async" });
-    const gpThumb = item.gp?.thumb_url;
-    if (gpThumb) {
-      img.src = `${gpThumb}=w256-h256-k-no`;
-      img.onerror = () => loadLocal(img, item);
-    } else {
-      loadLocal(img, item);
-    }
+    loadLocal(img, item);
     return h(`div.tile.${keptToo ? "keep" : cls}${item.live === false ? ".dead" : ""}`,
       img,
       h("div.tag", cls === "keep" ? "KEEP" : keptToo ? "KEEP TOO" : "TRASH"),
@@ -129,11 +108,11 @@ export async function dupesTab(root, ctx) {
           onclick: () => trashAll(actionable),
         }, runningOpId
           ? "Running…"
-          : `Trash duplicates in ${fmtInt(actionable.length)} group${actionable.length === 1 ? "" : "s"}`),
+          : `${dryRun.checked ? "Preview" : "Trash"} duplicates in ${fmtInt(actionable.length)} group${actionable.length === 1 ? "" : "s"}`),
       ),
       (resolved.length || keeperGone.length) > 0 && h("div.hint.warn", { style: { marginTop: "10px" } },
         h("strong", "Some groups were already resolved outside this tool. "),
-        "A Takeout export is a snapshot, so anything you deleted from Google Photos since then still " +
+        "The catalog is a snapshot, so anything removed outside this tool may still " +
         "has a catalog row. Tidying these up is safe — it only marks groups reviewed and promotes a " +
         "surviving copy to keeper; nothing is deleted.",
         h("div.row", { style: { marginTop: "10px" } },
@@ -189,14 +168,6 @@ export async function dupesTab(root, ctx) {
         h("span.spacer"),
         h("button.small", { disabled: busy, onclick: () => ignore(g) },
           g.blocked_reason === "already-deduplicated" ? "Mark done" : "Not a duplicate"),
-        h("button.small.wipe", {
-          // An oversized group is hundreds of unrelated photos; "trash all" there is never right.
-          disabled: busy || !liveTotal(g) || g.oversized,
-          title: g.oversized
-            ? "Disabled — this group is a clustering artifact, not a duplicate set."
-            : "Trash every photo in this group, including the one marked KEEP.",
-          onclick: () => trashEntireGroup(g),
-        }, `Trash all ${fmtInt(liveTotal(g))}`),
         h("button.danger.small", {
           disabled: !canTrash || busy,
           // Name the targets. "Trash 1" alone doesn't say *which* one, and in a two-photo group
@@ -206,7 +177,7 @@ export async function dupesTab(root, ctx) {
               dupes.filter((d) => d.live && !keepAlso.has(d.media_id)).map((d) => d.name).join(", ")
             : "",
           onclick: () => trashAll([g]),
-        }, toTrash ? `Trash ${fmtInt(toTrash)}` : "Trash duplicates"),
+        }, toTrash ? `${dryRun.checked ? "Preview" : "Trash"} ${fmtInt(toTrash)}` : "No duplicates selected"),
       ),
 
       // Spell out the outcome in the card itself, not just on hover — and say *why* this one won,
@@ -271,44 +242,6 @@ export async function dupesTab(root, ctx) {
    * guarantee shouldn't be reachable by a flag. One group at a time, always confirmed, and the
    * confirmation says plainly that nothing will remain.
    */
-  async function trashEntireGroup(g) {
-    if (busy) return;
-    const n = liveTotal(g);
-    if (!n) { toast("Nothing in this group is live in Google Photos.", "err"); return; }
-
-    const kept = (g.deletes || []).filter((d) => keepAlso.has(d.media_id)).length
-      + (keepAlso.has(g.keeper?.media_id) ? 1 : 0);
-
-    const ok = confirm(
-      `Trash ALL ${n} photo(s) in this group, including the one marked KEEP?\n\n` +
-      "No copy of these will be left in Google Photos.\n" +
-      (kept ? `${kept} marked "keep this too" will be left alone.\n` : "") +
-      "\nRecoverable from the bin for 60 days and undoable here. " +
-      "Your local originals are not touched.",
-    );
-    if (!ok) return;
-
-    busy = true;
-    paint();
-    try {
-      const r = await api.trashAllInGroup(g.group_id, [...keepAlso]);
-      const applied = await api.applyAction(r.action_id);
-      const opId = applied?.result?.operation_id;
-      if (!opId) {
-        toast("Nothing was linked to Google Photos — see the exported checklist.", "err");
-      } else {
-        toast(`Trashing all ${fmtInt(r.queued_for_deletion)} in this group…`);
-        startOperation(opId);   // not awaited — progress arrives over the worker port
-      }
-      await Promise.all([load(), refreshOps()]);
-    } catch (err) {
-      toast(String(err.message || err), "err");
-    } finally {
-      busy = false;
-      paint();
-    }
-  }
-
   async function ignore(g) {
     try {
       await api.ignoreGroup(g.group_id);
@@ -496,9 +429,8 @@ export async function dupesTab(root, ctx) {
     const res = await startOperation(op.id);
     if (!res?.ok) { toast(res?.error || "Dry run failed", "err"); return; }
 
-    await chrome.storage.local.set({ [DRY_RUN_KEY]: true });
-    dryRun.checked = false;
-    toast(`Dry run complete — ${fmtInt(op.total)} item(s) would be trashed. Uncheck stays off now.`, "ok");
+    dryRun.checked = true;
+    toast(`Dry run complete — ${fmtInt(op.total)} item(s) would be trashed. Review the previews before explicitly enabling a real run.`, "ok");
     await refreshOps();
   }
 
@@ -510,6 +442,7 @@ export async function dupesTab(root, ctx) {
    * thing to undo.
    */
   async function realTrash(groups) {
+    if (!(await api.health()).live_trash_enabled) throw new Error("Live trash is disabled. Follow README setup to enable it after reviewing dry runs.");
     const count = groups.reduce((n, g) =>
       n + (g.deletes || []).filter((d) => d.live && !keepAlso.has(d.media_id)).length, 0);
     if (!count) { toast("Nothing selected to trash.", "err"); return; }
@@ -529,7 +462,7 @@ export async function dupesTab(root, ctx) {
     const ok = confirm(
       `Move ${count} item(s) to the Google Photos bin?\n` + detail +
       (keptHere ? `\n${keptHere} marked "keep this too" will be left alone.\n` : "") +
-      "\nThey stay recoverable there for 60 days, and this run can be undone in one click.\n" +
+      "\nThey stay recoverable only while Google retains them in its bin. This run can be undone here.\n" +
       "Your local originals are not touched.",
     );
     if (!ok) return;
@@ -549,7 +482,8 @@ export async function dupesTab(root, ctx) {
     }
 
     await api.approveAction(approved.action_id);
-    const applied = await api.applyAction(approved.action_id);
+    const applied = await api.applyAction(approved.action_id, false);
+    dryRun.checked = true;
     const opId = applied?.result?.operation_id;
     if (!opId) {
       toast("Nothing was linked to Google Photos — see the exported checklist.", "err");
@@ -707,7 +641,7 @@ export async function dupesTab(root, ctx) {
             startOperation(o.id);
           },
         }, `Start (${fmtInt(o.total)})`),
-        o.status === "paused" && h("button.small", {
+        ["paused", "running"].includes(o.status) && h("button.small", {
           disabled: !!runningOpId,
           onclick: async () => {
             await api.resumeOperation(o.id);
@@ -765,8 +699,7 @@ export async function dupesTab(root, ctx) {
     h("div.card",
       h("h2", "Duplicates"),
       h("p.sub",
-        "Detected locally from the original files — exact (sha256), resized (perceptual hash), and " +
-        "near-duplicate (CLIP). Trashing moves items to the Google Photos bin, recoverable for 60 days."),
+        "Candidates found from local thumbnails (perceptual hash and optional CLIP). Matching previews do not prove identical originals. Trash can be undone only while Google retains the items in its bin."),
       summaryEl,
     ),
     opsEl,

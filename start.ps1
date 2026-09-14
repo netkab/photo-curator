@@ -1,17 +1,18 @@
-$base = "C:\photo-curator"
+$base = $PSScriptRoot
 $be   = "$base\backend"
 $fe   = "$base\frontend"
 
-# Kill any stale processes from previous runs
-Write-Host "Cleaning up stale processes..." -ForegroundColor DarkGray
-Get-Process python* -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-Get-Process node*   -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-Start-Sleep -Seconds 1
+# Refuse occupied ports. Never terminate unrelated Python/Node processes.
+foreach ($port in @(8077, 5177)) {
+    if (Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue) {
+        throw "Port $port is already in use. Close the existing server before starting Photo Curator."
+    }
+}
 
 # Backend — uvicorn in a new window
 Write-Host "Starting backend on :8077 ..." -ForegroundColor Cyan
 Start-Process powershell -ArgumentList "-NoExit", "-Command",
-  "cd '$be' ; .\.venv\Scripts\python -m uvicorn app.main:app --reload --port 8077" `
+  "cd '$be' ; .\.venv\Scripts\python -m uvicorn app.main:app --host 127.0.0.1 --port 8077" `
   -WindowStyle Normal
 
 # Wait until port 8077 is actually listening before starting Vite

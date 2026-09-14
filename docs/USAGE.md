@@ -1,3 +1,5 @@
+> Historical upstream guide. For this cleanup fork, follow [the repository README](../README.md). Takeout and legacy model setup are not required.
+
 # Photo Curator — Complete Usage Guide
 
 This guide walks you through every step: getting your photos out of Google, setting up the app,

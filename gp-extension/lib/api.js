@@ -20,7 +20,10 @@ async function request(path, options = {}, timeoutMs = 30000) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
-    const res = await fetch(`${API}${path}`, { ...options, signal: ctrl.signal });
+    const token = (await chrome.storage.local.get("pc-token"))["pc-token"];
+    if (!token) throw new Error("Pair the extension with your local token in Setup");
+    const res = await fetch(`${API}${path}`, { ...options, signal: ctrl.signal,
+      headers: {...options.headers, Authorization: `Bearer ${token}`}, credentials: "omit", redirect: "error" });
     const text = await res.text();
     const body = text ? JSON.parse(text) : null;
     if (!res.ok) throw new ApiError(res.status, body?.detail ?? text, path);
@@ -113,4 +116,17 @@ export const mapsOpenSelected = (clusterId, mediaIds) =>
 export const reviewActions = (status) => get(`/api/review${status ? `?status=${status}` : ""}`);
 export const approveAction = (id) => post(`/api/review/${id}/approve`);
 // Applying an `upload` action pushes a whole video to Google — minutes, not seconds.
-export const applyAction = (id, timeoutMs = 900000) => post(`/api/review/${id}/apply`, {}, timeoutMs);
+export const applyAction = (id, dryRun = true) => post(`/api/review/${id}/apply`, {dry_run: dryRun});
+
+export async function localImage(url) {
+  const parsed = new URL(url);
+  if (parsed.origin !== API || !/^\/media\/thumbs\/[a-zA-Z0-9_.-]+$/.test(parsed.pathname)
+      || parsed.search || parsed.hash) throw new Error("Only local cached thumbnails may be loaded");
+  const token = (await chrome.storage.local.get("pc-token"))["pc-token"];
+  const res = await fetch(url, {headers: {Authorization: `Bearer ${token}`}, credentials: "omit",
+                              redirect: "error", signal: AbortSignal.timeout(20000)});
+  if (!res.ok) throw new Error(`Thumbnail HTTP ${res.status}; check pairing`);
+  const blob = await res.blob();
+  if (!blob.type.startsWith("image/") || blob.size > 4 * 1024 * 1024) throw new Error("Invalid thumbnail");
+  return blob;
+}

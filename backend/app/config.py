@@ -26,6 +26,8 @@ def _path(env: str, default: Path) -> Path:
 
 @dataclass
 class Settings:
+    live_trash_enabled: bool = field(default_factory=lambda: os.getenv("PC_ENABLE_LIVE_TRASH", "0") == "1")
+
     # --- Paths ---
     data_dir: Path = field(default_factory=lambda: _path("DATA_DIR", BACKEND_DIR / "data"))
     takeout_dir: Path = field(default_factory=lambda: _path("TAKEOUT_DIR", BACKEND_DIR / "data" / "takeout"))
@@ -142,7 +144,7 @@ class Settings:
 
     def ensure_dirs(self) -> None:
         for d in (self.data_dir, self.thumbs_dir, self.derived_dir, self.exports_dir):
-            d.mkdir(parents=True, exist_ok=True)
+            d.mkdir(parents=True, exist_ok=True, mode=0o700)
 
 
 settings = Settings()

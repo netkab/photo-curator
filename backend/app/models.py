@@ -6,6 +6,7 @@ mutating action — nothing touches Google Photos until an action is explicitly 
 from __future__ import annotations
 
 from datetime import datetime
+import builtins
 
 from sqlalchemy import (
     Boolean,
@@ -39,6 +40,10 @@ class Media(Base):
     height: Mapped[int | None] = mapped_column(Integer, default=None)
     bytes: Mapped[int | None] = mapped_column(Integer, default=None)
     taken_at: Mapped[datetime | None] = mapped_column(DateTime, index=True, default=None)
+
+    source: Mapped[str] = mapped_column(String, default="takeout")
+    thumbnail_sha256: Mapped[str | None] = mapped_column(String(64), default=None)
+    clip_embedding: Mapped[builtins.bytes | None] = mapped_column(default=None)
 
     # geo (from Takeout sidecar / EXIF — never from the Photos API)
     gps_lat: Mapped[float | None] = mapped_column(Float, default=None)
@@ -273,8 +278,18 @@ class GpOperation(Base):
     cursor: Mapped[int] = mapped_column(Integer, default=0)  # index into payload — the resume point
 
     status: Mapped[str] = mapped_column(String, default="pending", index=True)  # pending|running|paused|done|failed|cancelled
-    dry_run: Mapped[bool] = mapped_column(Boolean, default=False)
+    dry_run: Mapped[bool] = mapped_column(Boolean, default=True)
     error: Mapped[str | None] = mapped_column(Text, default=None)
     note: Mapped[str | None] = mapped_column(Text, default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class ScanCursor(Base):
+    """Checkpoint persisted only after a page has been committed to the catalog."""
+    __tablename__ = "scan_cursors"
+    account: Mapped[str] = mapped_column(String, primary_key=True)
+    page_id: Mapped[str | None] = mapped_column(Text, default=None)
+    complete: Mapped[bool] = mapped_column(Boolean, default=False)
+    pages: Mapped[int] = mapped_column(Integer, default=0)
+    items: Mapped[int] = mapped_column(Integer, default=0)

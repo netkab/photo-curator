@@ -1,3 +1,8 @@
+> Fork note: this full userscript is retained for provenance only and is **not loaded**.
+> `main/commands.js` contains a reduced adapter derived from its library/metadata and trash/restore
+> request shapes. Chrome invokes that function directly with `scripting.executeScript`; no page
+> message bridge, toolkit UI, album, metadata-write or locked-folder feature is enabled.
+
 # Vendored: Google Photos Toolkit (GPTK)
 
 | | |

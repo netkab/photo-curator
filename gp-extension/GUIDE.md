@@ -1,3 +1,5 @@
+> Historical upstream guide. For this cleanup fork, follow [the repository README](../README.md). Takeout and legacy model setup are not required.
+
 # Using the Google Photos Bridge
 
 A walkthrough of what the extension does, why it works the way it does, and how to run a first

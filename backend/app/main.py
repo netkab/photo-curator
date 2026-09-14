@@ -1,79 +1,49 @@
-"""FastAPI application entrypoint."""
-from __future__ import annotations
-
-from fastapi import FastAPI
+"""Loopback-only cleanup API. Unrelated legacy routes are intentionally not mounted."""
+from fastapi import FastAPI, HTTPException
+from contextlib import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.staticfiles import StaticFiles
-
 from .config import settings
 from .db import init_db
 from .jobs import manager
-from .routers import catalog, dedup, enhance, gp, ingest, maps, reclaim, review, videos
-from ._path_fix import ensure_tool_paths
+from .routers import catalog, dedup, gp, review, direct
+from .security import LocalSecurityMiddleware, allowed_origins, local_token, router as auth_router
 
-app = FastAPI(title="Photo Curator", version="0.1.0")
-
-app.add_middleware(
-    CORSMiddleware,
-    # Allow the React dev server + any Chrome extension (origin is chrome-extension://<id>)
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# Private Network Access header — lets Chrome extensions and HTTPS pages
-# fetch from http://localhost without being blocked by PNA restrictions.
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.requests import Request
-
-class PrivateNetworkMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):
-        response = await call_next(request)
-        response.headers["Access-Control-Allow-Private-Network"] = "true"
-        return response
-
-app.add_middleware(PrivateNetworkMiddleware)
-
-
-@app.on_event("startup")
-def _startup() -> None:
-    ensure_tool_paths()   # inject known tool locations into PATH before anything else runs
+@asynccontextmanager
+async def lifespan(app):
     settings.ensure_dirs()
+    local_token()
     init_db()
+    yield
 
+app = FastAPI(title="Photo Curator", version="0.2.0", docs_url=None, redoc_url=None, openapi_url=None,
+              lifespan=lifespan)
+app.add_middleware(CORSMiddleware, allow_origins=sorted(allowed_origins()),
+                   allow_methods=["GET", "POST"], allow_headers=["Content-Type", "Authorization"])
+app.add_middleware(LocalSecurityMiddleware)
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=["localhost", "127.0.0.1", "[::1]"])
 
 @app.get("/api/health")
-def health() -> dict:
-    return {
-        "ok": True,
-        "version": app.version,
-        "uploads_enabled": settings.uploads_enabled,
-        "places_enabled": bool(settings.places_api_key),
-        "data_dir": str(settings.data_dir),
-    }
-
+def health():
+    return {"ok": True, "version": app.version, "cleanup_only": True,
+            "live_trash_enabled": settings.live_trash_enabled}
 
 @app.get("/api/jobs")
-def list_jobs() -> list[dict]:
+def jobs():
     return [j.to_dict() for j in manager.list()]
 
-
 @app.get("/api/jobs/{job_id}")
-def get_job(job_id: str) -> dict:
-    job = manager.get(job_id)
-    return job.to_dict() if job else {"error": "not found"}
+def job(job_id: str):
+    j = manager.get(job_id)
+    if not j:
+        raise HTTPException(404, "Job not found; restart analysis after a server restart")
+    return j.to_dict()
 
+@app.post("/api/jobs/{job_id}/cancel")
+def cancel(job_id: str):
+    return {"cancelled": manager.cancel(job_id)}
 
-app.include_router(ingest.router)
-app.include_router(catalog.router)
-app.include_router(dedup.router)
-app.include_router(enhance.router)
-app.include_router(maps.router)
-app.include_router(videos.router)
-app.include_router(review.router)
-app.include_router(gp.router)
-app.include_router(reclaim.router)
-
-# Serve thumbnails + derived media so the UI can display them.
+for router in (auth_router, catalog.router, dedup.router, gp.router, review.router, direct.router):
+    app.include_router(router)
 app.mount("/media/thumbs", StaticFiles(directory=str(settings.thumbs_dir)), name="thumbs")
-app.mount("/media/derived", StaticFiles(directory=str(settings.derived_dir)), name="derived")

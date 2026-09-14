@@ -39,11 +39,8 @@ export default function Catalog() {
       <div className="row spread">
         <h2>Catalog</h2>
         <div className="row">
-          <JobButton label="Ingest Takeout" startPath="/ingest" jobName="ingest" onDone={load} className="secondary" />
-          <JobButton
-            label={remaining > 0 ? `Analyze next 200 (${remaining.toLocaleString()} left)` : "Analyze (local AI)"}
-            startPath="/analyze" jobName="analyze" body={{ limit: 200 }} onDone={load}
-          />
+          <JobButton label="Fetch thumbnails and find duplicates" startPath="/direct/analyze"
+            jobName="direct-analysis" body={{use_clip: false}} onDone={load} />
         </div>
       </div>
 
@@ -51,13 +48,6 @@ export default function Catalog() {
         <div className="card row" style={{ justifyContent: "space-around", flexWrap: "wrap" }}>
           <div className="stat"><b>{stats.photos.toLocaleString()}</b><span className="muted">photos</span></div>
           <div className="stat"><b>{stats.videos.toLocaleString()}</b><span className="muted">videos</span></div>
-          <div className="stat"><b>{stats.with_gps.toLocaleString()}</b><span className="muted">geo-tagged</span></div>
-          <div className="stat">
-            <b>{stats.captioned.toLocaleString()}</b>
-            <span className="muted">captioned{pct(stats.captioned, stats.photos)}</span>
-          </div>
-          <div className="stat"><b>{stats.with_text.toLocaleString()}</b><span className="muted">with text</span></div>
-          <div className="stat"><b>{stats.people}</b><span className="muted">people</span></div>
           <div className="stat">
             <b style={{ color: remaining > 0 ? "var(--warn)" : "var(--good)" }}>
               {stats.analyzed.toLocaleString()}/{stats.photos.toLocaleString()}
@@ -67,20 +57,12 @@ export default function Catalog() {
         </div>
       )}
 
-      {stats && remaining > 0 && (
-        <div className="banner" style={{ marginBottom: 16 }}>
-          <b>{remaining.toLocaleString()} photos</b> still need analysis.
-          Each click processes 200. For bulk processing use the CLI:<br/>
-          <code style={{ fontSize: 11 }}>
-            cd backend ; .\.venv\Scripts\python -m app.cli analyze --batch --limit 200
-          </code>
-          <span className="muted"> (runs until done, Ctrl+C safe, 30s cooldown between batches)</span>
-        </div>
-      )}
+      <p className="muted">Scan your library in the Chrome extension first. No Takeout export is needed.
+        Photos are analyzed from small local previews; videos are listed for reference.</p>
 
       <div className="card">
         <div className="row">
-          <input placeholder="Search captions, OCR, names..." value={q}
+          <input aria-label="Search catalog filenames" placeholder="Search filenames…" value={q}
                  onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === "Enter" && load()} style={{ flex: 1 }} />
           <select value={type} onChange={(e) => setType(e.target.value)}>
             <option value="">all</option>
@@ -98,7 +80,7 @@ export default function Catalog() {
             <div className="cap">{m.caption || m.name}{m.place_name ? ` . ${m.place_name}` : ""}</div>
           </div>
         ))}
-        {items.length === 0 && <p className="muted">No media yet. Run "Ingest Takeout", then "Analyze".</p>}
+        {items.length === 0 && <p className="muted">No catalog items yet. Open Library Sync in the Chrome extension to scan Google Photos.</p>}
       </div>
     </div>
   );

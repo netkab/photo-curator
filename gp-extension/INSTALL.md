@@ -1,3 +1,5 @@
+> Historical upstream guide. For this cleanup fork, follow [the repository README](../README.md). Takeout and legacy model setup are not required.
+
 # Photo Curator — Google Photos Bridge
 
 A Chrome extension that lets Photo Curator's local analysis **act on** your Google Photos library:

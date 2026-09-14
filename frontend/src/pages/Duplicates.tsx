@@ -96,7 +96,7 @@ function GroupModal({ g, onClose, onChanged }: { g: Group; onClose: () => void; 
   const [keeperId, setKeeperId] = useState(g.keeper_media_id);
   const [busy, setBusy] = useState(false);
 
-  // Excluded members will not be queued for deletion (user keeps them too)
+  // Excluded members will not be queued for review (user keeps them too)
   const [excluded, setExcluded] = useState<Set<number>>(new Set());
 
   async function setAsKeeper(mid: number) {
@@ -144,14 +144,14 @@ function GroupModal({ g, onClose, onChanged }: { g: Group; onClose: () => void; 
             <h3 style={{ margin: 0 }}>Duplicate stack &middot; {members.length} photos</h3>
             <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
               Method: <span className="pill">{g.method}</span>
-              {" "}&middot; queueing <b style={{ color: "var(--danger)" }}>{toDelete.length}</b> for deletion
+              {" "}&middot; queueing <b style={{ color: "var(--danger)" }}>{toDelete.length}</b> for review
               {excluded.size > 0 && <span className="muted"> (excluded {excluded.size})</span>}
             </div>
           </div>
           <div className="row" style={{ gap: 8 }}>
             <button className="btn secondary" onClick={onClose}>Close</button>
             <button className="btn good" disabled={busy || toDelete.length === 0} onClick={approve}>
-              Approve &middot; queue {toDelete.length} for deletion
+              Approve &middot; queue {toDelete.length} for review
             </button>
           </div>
         </div>
@@ -195,7 +195,7 @@ function GroupModal({ g, onClose, onChanged }: { g: Group; onClose: () => void; 
                     {/* X / undo button — top-right */}
                     <button
                       onClick={() => toggleExclude(m.media_id)}
-                      title={isExcluded ? "Re-include for deletion" : "Keep this photo too (skip deletion)"}
+                      title={isExcluded ? "Re-include for review" : "Keep this photo too (skip deletion)"}
                       style={{
                         position: "absolute", top: 4, right: 4, zIndex: 2,
                         background: isExcluded ? "var(--warn)" : "rgba(0,0,0,0.75)", color: "#fff",
@@ -260,16 +260,16 @@ export default function Duplicates() {
       <div className="row spread">
         <h2>Duplicates &amp; similar</h2>
         <div className="row">
-          <JobButton label="Detect (with CLIP)" startPath="/dedup/run" jobName="dedup"
+          <JobButton label="Analyze with optional CLIP" startPath="/dedup/run" jobName="direct-analysis"
                      body={{ use_clip: true }} onDone={() => { setPage(0); load(0); }} />
-          <JobButton label="Detect (fast)" startPath="/dedup/run" jobName="dedup"
+          <JobButton label="Analyze thumbnails" startPath="/dedup/run" jobName="direct-analysis"
                      body={{ use_clip: false }} onDone={() => { setPage(0); load(0); }} className="secondary" />
         </div>
       </div>
 
       <div className="banner">
         Each tile is a stack of duplicates. The shown photo is the auto-picked <b style={{ color: "var(--good)" }}>keeper</b>;
-        the badge top-right shows how many photos in the stack, bottom-right shows how many will be deleted.
+        the badge top-right shows how many photos in the stack, bottom-right shows how many are proposed for review.
         Click any stack to review and approve.
       </div>
 
@@ -277,7 +277,7 @@ export default function Duplicates() {
         <div style={{ margin: "12px 0", fontSize: 13 }} className="row spread">
           <span>
             <b>{total.toLocaleString()}</b> stacks &middot; <b>{totalDupes.toLocaleString()}</b> photos involved
-            &middot; ~<b>{(totalDupes - total).toLocaleString()}</b> can be removed
+            &middot; ~<b>{(totalDupes - total).toLocaleString()}</b> candidates to review
           </span>
           {totalPages > 1 && (
             <div className="row" style={{ gap: 4 }}>

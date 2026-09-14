@@ -1,19 +1,8 @@
-"""Google Photos bridge — library sync, catalog linking, and resumable batch operations.
+"""Google Photos direct catalog sync, durable page cursors, and reviewed trash/restore queues.
 
-The Chrome extension is the only thing that can reach Google Photos (via its internal
-``batchexecute`` API, riding the user's own signed-in session). This router is the backend half:
-
-* ``/sync``       the extension posts pages of the live library; we upsert ``gp_items``
-* ``/link``       match those rows to the local Takeout catalog
-* ``/operations`` durable work queues the extension drains
-
-**The server owns the cursor.** The extension asks for the next slice, executes it, and reports back;
-we advance ``cursor`` and persist the result. Killing the browser mid-run therefore loses at most one
-batch. That is deliberate — the reference implementation (mtalcott/google-photos-deduper) keeps
-progress only in memory and its users lose thousands of items when a run stalls.
-
-Nothing here authorises a deletion. A ``trash`` operation carries the ``review_action_id`` that was
-approved in the Review Queue; this router only schedules and tracks the execution of it.
+The extension reads the signed-in web integration. Metadata and its next cursor commit together.
+Only an exact approved selection can create live trash work. Each issued batch has a durable lease;
+results must cover those keys exactly. Interrupted/uncertain work requires explicit user resumption.
 """
 from __future__ import annotations
 
@@ -21,25 +10,27 @@ import json
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from ..db import db_dependency
+from ..db import db_dependency, serialized
 from ..jobs import manager
-from ..models import GpItem, GpOperation, Media, ReviewAction
+from ..models import GpItem, GpOperation, Media, ReviewAction, ScanCursor
 from ..pipeline import gp_match
+from ..pipeline.direct import catalog_item
+from ..config import settings
 
 router = APIRouter(prefix="/api/gp", tags=["gp"])
 
 # Operations that mutate the library. Anything not listed is rejected outright — this is the
 # allow-list that keeps "permanent delete" and "locked folder" off the table by construction.
-ALLOWED_OPS = {"trash", "restore", "set_description", "set_timestamp", "add_to_album"}
+ALLOWED_OPS = {"trash", "restore"}
 # Ops that must be able to point back at the approved ReviewAction that authorised them.
 GATED_OPS = {"trash"}
 
-MAX_BATCH = 250
-DEFAULT_BATCH = 100
+MAX_BATCH = 25
+DEFAULT_BATCH = 25
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -63,16 +54,33 @@ class GpItemIn(BaseModel):
 
 
 class SyncBody(BaseModel):
-    account: str = "/u/0"
-    items: list[GpItemIn]
+    account: str = Field(min_length=3, max_length=320)
+    items: list[GpItemIn] = Field(max_length=500)
+    page_id: str | None = None
+    next_page_id: str | None = None
+
+    @field_validator("account")
+    @classmethod
+    def stable_account(cls, value):
+        if value.startswith("/u/"):
+            raise ValueError("Stable Google account identity required; reload the extension")
+        return value
+
 
 
 @router.post("/sync")
+@serialized
 def sync(body: SyncBody, db: Session = Depends(db_dependency)) -> dict:
     """Upsert a page of live-library items. Idempotent — safe to replay a page after a failure."""
-    if not body.items:
-        return {"upserted": 0, "inserted": 0, "total": db.query(GpItem).count()}
-
+    accounts = {a for (a,) in db.query(GpItem.account).distinct().all()}
+    if accounts and accounts != {body.account}:
+        raise HTTPException(409, "This catalog belongs to another account. Use a separate DATA_DIR.")
+    cursor = db.get(ScanCursor, body.account)
+    if cursor and cursor.page_id != body.page_id:
+        # A page can be replayed after a lost response, but not silently skip a checkpoint.
+        if cursor.page_id == body.next_page_id:
+            return {"upserted": 0, "inserted": 0, "total": db.query(GpItem).count()}
+        raise HTTPException(409, "Scan checkpoint changed; resume the scan")
     keys = [i.media_key for i in body.items]
     existing = {g.media_key: g for g in db.query(GpItem).filter(GpItem.media_key.in_(keys)).all()}
 
@@ -84,6 +92,7 @@ def sync(body: SyncBody, db: Session = Depends(db_dependency)) -> dict:
             row = GpItem(media_key=item.media_key)
             db.add(row)
             inserted += 1
+            existing[item.media_key] = row
         # Only overwrite with values we actually received. A later page fetched through a leaner
         # RPC can omit fields, and nulling out a dedup_key we already hold would silently make the
         # item unactionable. `trashed` is exempt — False is a real state, not a missing one.
@@ -93,7 +102,21 @@ def sync(body: SyncBody, db: Session = Depends(db_dependency)) -> dict:
         row.trashed = item.trashed
         row.account = body.account
         row.synced_at = now
-        # media_id / match_method are deliberately untouched: re-syncing must never break a link.
+        catalog_item(db, row)
+        media = db.get(Media, row.media_id)
+        if media and media.source == "google-photos-thumbnail":
+            for name in ("width", "height", "bytes", "taken_at", "duration"):
+                if getattr(row, name) is not None:
+                    setattr(media, name, getattr(row, name))
+            media.rel_name = row.file_name or row.media_key
+            media.media_type = "video" if row.duration is not None else "photo"
+    if cursor is None:
+        cursor = ScanCursor(account=body.account, pages=0, items=0)
+        db.add(cursor)
+    cursor.page_id = body.next_page_id
+    cursor.complete = body.next_page_id is None
+    cursor.pages += 1
+    cursor.items += len(body.items)
 
     db.commit()
     return {"upserted": len(body.items), "inserted": inserted, "total": db.query(GpItem).count()}
@@ -103,7 +126,7 @@ class LinkBody(BaseModel):
     relink: bool = False
 
 
-@router.post("/link")
+# Legacy Takeout matcher is not exposed by cleanup mode.
 def link(body: LinkBody | None = None) -> dict:
     """Run the catalog matcher as a background job (poll via /api/jobs/{id})."""
     if manager.is_running("gp-link"):
@@ -183,7 +206,7 @@ class ManualLinkBody(BaseModel):
     media_id: int | None  # null clears the link
 
 
-@router.post("/items/{media_key}/link")
+# Manual relinking is not exposed by cleanup mode.
 def manual_link(media_key: str, body: ManualLinkBody, db: Session = Depends(db_dependency)) -> dict:
     """Resolve an ambiguous row by hand. Manual links are never overwritten by the matcher."""
     g = db.query(GpItem).filter(GpItem.media_key == media_key).one_or_none()
@@ -229,31 +252,52 @@ class CreateOpBody(BaseModel):
     entries: list[dict] | None = None      # parameterised ops (set_description, add_to_album, …)
     args: dict | None = None               # applies to every batch, e.g. {"title": "Goa"}
     review_action_id: int | None = None
-    account: str = "/u/0"
-    dry_run: bool = False
+    account: str = Field(min_length=3, max_length=320)
+    dry_run: bool = True
     note: str | None = None
 
 
+def validate_trash(db: Session, action_id: int | None, account: str, keys: list[str]):
+    if not settings.live_trash_enabled:
+        raise HTTPException(403, "Live trash is disabled. Set PC_ENABLE_LIVE_TRASH=1 and restart after reviewing dry runs.")
+    ra = db.get(ReviewAction, action_id) if action_id else None
+    if not ra or ra.kind != "delete" or ra.status != "approved":
+        raise HTTPException(409, "An approved trash review is required")
+    snapshot = json.loads(ra.payload)
+    if snapshot.get("approved_account") != account or account.startswith("/u/"):
+        raise HTTPException(409, "Approval account does not match; rescan and review again")
+    if not keys or not set(keys).issubset(snapshot.get("approved_keys", [])):
+        raise HTTPException(409, "Operation contains keys outside the reviewed selection")
+    protected = set(snapshot.get("protected_keys", []))
+    if not protected or set(keys) & protected:
+        raise HTTPException(409, "Operation conflicts with a protected keeper")
+    live_keepers = {k for (k,) in db.query(GpItem.dedup_key).filter(GpItem.account == account,
+                       GpItem.dedup_key.in_(protected), GpItem.trashed.is_(False)).all()}
+    if live_keepers != protected:
+        raise HTTPException(409, "A keeper is no longer live; review again")
+    rows = db.query(GpItem).filter(GpItem.account == account, GpItem.dedup_key.in_(keys)).all()
+    if {g.dedup_key for g in rows} != set(keys) or any(g.is_owned is not True for g in rows):
+        raise HTTPException(409, "Selected keys are missing or not owned by this account")
+
+
 @router.post("/operations")
+@serialized
 def create_operation(body: CreateOpBody, db: Session = Depends(db_dependency)) -> dict:
     if body.op not in ALLOWED_OPS:
         raise HTTPException(400, f"op must be one of {sorted(ALLOWED_OPS)}")
 
-    # A dry run is exempt from the review gate: the extension returns before issuing the RPC, so it
-    # provably cannot change anything, and requiring an approval would mean consuming real review
-    # state just to test the plumbing.
-    if body.op in GATED_OPS and not body.dry_run:
-        if body.review_action_id is None:
-            raise HTTPException(400, f"'{body.op}' requires an approved review_action_id")
-        ra = db.get(ReviewAction, body.review_action_id)
-        if not ra:
-            raise HTTPException(404, "review action not found")
-        if ra.status not in ("approved", "done"):
-            raise HTTPException(409, f"review action {ra.id} is '{ra.status}', not approved")
-
     payload = _dedupe_payload(body)
-    if not payload:
-        raise HTTPException(400, "nothing to do")
+    if not payload or any(not isinstance(k, str) for k in payload):
+        raise HTTPException(400, "Provide a nonempty list of content keys")
+    if body.op == "restore" and not body.dry_run:
+        raise HTTPException(400, "Create restores through the Undo endpoint")
+    if body.op == "trash" and not body.dry_run:
+        validate_trash(db, body.review_action_id, body.account, payload)
+    if body.review_action_id:
+        existing = db.query(GpOperation).filter(GpOperation.review_action_id == body.review_action_id,
+                     GpOperation.dry_run == body.dry_run, GpOperation.op == body.op).first()
+        if existing:
+            return _op_dict(existing)
 
     o = GpOperation(
         op=body.op, review_action_id=body.review_action_id, account=body.account,
@@ -320,19 +364,24 @@ def get_operation(op_id: int, db: Session = Depends(db_dependency)) -> dict:
 
 
 @router.get("/operations/{op_id}/next")
+@serialized
 def next_batch(op_id: int, size: int = DEFAULT_BATCH, account: str | None = None,
                db: Session = Depends(db_dependency)) -> dict:
     """Hand the extension the next slice to execute, starting from the persisted cursor."""
     o = db.get(GpOperation, op_id)
     if not o:
         raise HTTPException(404, "operation not found")
-    if o.status in ("done", "cancelled", "failed"):
+    if o.status in ("done", "cancelled", "failed", "paused"):
         return {"op": o.op, "status": o.status, "cursor": o.cursor, "batch": [], "done": True}
 
     # Refuse to act against a different signed-in account than the one the op was built for.
-    if account and account != o.account:
+    if not account or account != o.account:
         raise HTTPException(409, f"operation targets account {o.account}, extension is on {account}")
 
+    if o.op not in ALLOWED_OPS:
+        raise HTTPException(409, "Unsupported legacy operation")
+    if o.op == "trash" and not o.dry_run:
+        validate_trash(db, o.review_action_id, o.account, json.loads(o.payload))
     size = max(1, min(size, MAX_BATCH))
     payload = json.loads(o.payload)
     batch = payload[o.cursor:o.cursor + size]
@@ -343,6 +392,12 @@ def next_batch(op_id: int, size: int = DEFAULT_BATCH, account: str | None = None
         db.commit()
         return {"op": o.op, "status": "done", "cursor": o.cursor, "batch": [], "done": True}
 
+    import time
+    lease = json.loads(o.args or "{}")
+    if lease.get("lease_until", 0) > time.time():
+        raise HTTPException(409, "A batch is already in flight; wait before resuming")
+    o.args = json.dumps({"issued": batch, "issued_cursor": o.cursor, "lease_until": time.time() + 150})
+    db.commit()
     if o.status == "pending":
         o.status = "running"
         o.updated_at = datetime.utcnow()
@@ -363,6 +418,7 @@ class ResultBody(BaseModel):
 
 
 @router.post("/operations/{op_id}/result")
+@serialized
 def report_result(op_id: int, body: ResultBody, db: Session = Depends(db_dependency)) -> dict:
     o = db.get(GpOperation, op_id)
     if not o:
@@ -372,6 +428,11 @@ def report_result(op_id: int, body: ResultBody, db: Session = Depends(db_depende
     if body.cursor != o.cursor:
         return {**_op_dict(o), "ignored": "stale cursor"}
 
+    if o.status in ("done", "failed"):
+        raise HTTPException(409, "Operation has finished")
+    issued = json.loads(o.args or "{}")
+    if issued.get("issued_cursor") != body.cursor or not issued.get("issued"):
+        raise HTTPException(409, "No matching issued batch")
     if body.error:
         # Batch-level failure. Leave the cursor where it is so the retry re-runs the same slice —
         # every op here is idempotent (trashing an already-trashed key is a no-op).
@@ -381,6 +442,11 @@ def report_result(op_id: int, body: ResultBody, db: Session = Depends(db_depende
         db.commit()
         return _op_dict(o)
 
+    reported = body.succeeded + [f.get("key") for f in body.failed]
+    if len(set(reported)) != len(reported) or set(reported) != set(issued["issued"]):
+        raise HTTPException(400, "Result must cover exactly the issued keys once each")
+    was_cancelled = o.status == "cancelled"
+    o.args = None
     results = json.loads(o.results) if o.results else {"succeeded": [], "failed": []}
     results["succeeded"].extend(body.succeeded)
     results["failed"].extend(body.failed)
@@ -396,7 +462,7 @@ def report_result(op_id: int, body: ResultBody, db: Session = Depends(db_depende
     o.failed_count = len(results["failed"])
     o.results = json.dumps(results)
     o.error = None
-    o.status = "done" if o.cursor >= o.total else "running"
+    o.status = "cancelled" if was_cancelled else "done" if o.cursor >= o.total else "running"
     o.updated_at = datetime.utcnow()
 
     if o.status == "done":
@@ -415,7 +481,7 @@ def _mark_trashed(db: Session, o: GpOperation, keys: list[str]) -> None:
         return
     value = o.op == "trash"
     # Content identity, so one dedup_key can cover several rows (e.g. shared-album copies).
-    for row in db.query(GpItem).filter(GpItem.dedup_key.in_(keys)).all():
+    for row in db.query(GpItem).filter(GpItem.dedup_key.in_(keys), GpItem.account == o.account).all():
         row.trashed = value
 
 
@@ -424,13 +490,14 @@ def _finish_review_action(db: Session, o: GpOperation) -> None:
     if o.op != "trash" or not o.review_action_id or o.dry_run:
         return
     ra = db.get(ReviewAction, o.review_action_id)
-    if ra and ra.status != "done":
+    if ra and ra.status != "done" and not o.failed_count:
         ra.status = "done"
         ra.applied_at = datetime.utcnow()
         ra.note = f"Trashed {o.done_count} item(s) in Google Photos via extension (op {o.id})."
 
 
 @router.post("/operations/{op_id}/cancel")
+@serialized
 def cancel_operation(op_id: int, db: Session = Depends(db_dependency)) -> dict:
     o = db.get(GpOperation, op_id)
     if not o:
@@ -443,6 +510,7 @@ def cancel_operation(op_id: int, db: Session = Depends(db_dependency)) -> dict:
 
 
 @router.post("/operations/{op_id}/resume")
+@serialized
 def resume_operation(op_id: int, db: Session = Depends(db_dependency)) -> dict:
     o = db.get(GpOperation, op_id)
     if not o:
@@ -456,15 +524,18 @@ def resume_operation(op_id: int, db: Session = Depends(db_dependency)) -> dict:
 
 
 @router.post("/operations/{op_id}/undo")
+@serialized
 def undo_operation(op_id: int, db: Session = Depends(db_dependency)) -> dict:
     """Build the inverse operation from what actually succeeded.
 
-    Only ``trash`` is reversible, and only because Google's bin retains items for 60 days. This is
+    Only ``trash`` is reversible, and only while Google retains the items in its bin. This is
     the safety net that makes one-click trashing acceptable at all.
     """
     o = db.get(GpOperation, op_id)
     if not o:
         raise HTTPException(404, "operation not found")
+    if o.status not in ("done", "cancelled", "failed") or json.loads(o.args or "{}").get("issued"):
+        raise HTTPException(409, "Stop and resolve any in-flight batch before Undo")
     if o.op != "trash":
         raise HTTPException(400, f"cannot undo '{o.op}' — only trash is reversible")
     if o.dry_run:
@@ -474,9 +545,12 @@ def undo_operation(op_id: int, db: Session = Depends(db_dependency)) -> dict:
     if not succeeded:
         raise HTTPException(400, "nothing succeeded, nothing to undo")
 
+    existing = db.query(GpOperation).filter(GpOperation.op == "restore", GpOperation.note == f"Undo of operation {o.id}").first()
+    if existing:
+        return _op_dict(existing)
     succeeded = dedupe_keys(succeeded)
     inverse = GpOperation(
-        op="restore", account=o.account, payload=json.dumps(succeeded),
+        op="restore", account=o.account, payload=json.dumps(succeeded), dry_run=False,
         total=len(succeeded), status="pending",
         results=json.dumps({"succeeded": [], "failed": []}),
         note=f"Undo of operation {o.id}",
@@ -486,9 +560,34 @@ def undo_operation(op_id: int, db: Session = Depends(db_dependency)) -> dict:
     if o.review_action_id:
         ra = db.get(ReviewAction, o.review_action_id)
         if ra:
-            ra.status = "approved"
+            ra.status = "dismissed"
             ra.applied_at = None
-            ra.note = f"Undone — restore queued as operation for {len(succeeded)} item(s)."
+            ra.note = f"Restore requested — restore queued as operation for {len(succeeded)} item(s)."
 
     db.commit()
     return _op_dict(inverse)
+
+
+@router.get("/scan-state")
+def scan_state(account: str, db: Session = Depends(db_dependency)):
+    row = db.get(ScanCursor, account)
+    return {"page_id": row.page_id if row else None, "complete": row.complete if row else False,
+            "pages": row.pages if row else 0, "items": row.items if row else 0}
+
+class StartScan(BaseModel):
+    account: str
+    restart: bool = False
+
+@router.post("/scan-start")
+@serialized
+def scan_start(body: StartScan, db: Session = Depends(db_dependency)):
+    accounts = {a for (a,) in db.query(GpItem.account).distinct().all()}
+    if body.account.startswith("/u/") or not body.account:
+        raise HTTPException(400, "Stable account identity required")
+    if accounts and accounts != {body.account}:
+        raise HTTPException(409, "Use a separate DATA_DIR for a different Google account")
+    row = db.get(ScanCursor, body.account)
+    if row and (body.restart or row.complete):
+        row.page_id, row.complete, row.pages, row.items = None, False, 0, 0
+        db.commit()
+    return scan_state(body.account, db)

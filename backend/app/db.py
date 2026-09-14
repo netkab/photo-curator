@@ -28,6 +28,9 @@ def _migrate() -> None:
     adds = {
         "place_clusters": {"manual": "INTEGER DEFAULT 0", "reviewed": "INTEGER DEFAULT 0"},
         "media": {
+            "source": "TEXT DEFAULT 'takeout'",
+            "thumbnail_sha256": "TEXT DEFAULT NULL",
+            "clip_embedding": "BLOB DEFAULT NULL",
             "face_area_ratio": "REAL DEFAULT NULL",
             "archived_at": "TIMESTAMP DEFAULT NULL",
             "archived_from": "TEXT DEFAULT NULL",
@@ -76,3 +79,15 @@ def db_dependency() -> Iterator[Session]:
         yield s
     finally:
         s.close()
+
+
+# Run one backend worker: review/queue state transitions must be indivisible across HTTP threads.
+from functools import wraps
+from threading import RLock
+mutation_lock = RLock()
+def serialized(fn):
+    @wraps(fn)
+    def wrapped(*args, **kwargs):
+        with mutation_lock:
+            return fn(*args, **kwargs)
+    return wrapped

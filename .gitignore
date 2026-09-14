@@ -50,3 +50,8 @@ desktop.ini
 .idea/
 .vscode/
 *.swp
+
+# Local pairing secret and scratch artifacts, including custom DATA_DIRs
+**/.local-token
+work/
+*.db-shm

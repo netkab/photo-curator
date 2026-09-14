@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session, aliased
 
 from ..config import settings
-from ..db import db_dependency
+from ..db import db_dependency, serialized
 from ..jobs import manager
 from ..models import DupGroup, DupMember, GpItem, Media, ReviewAction
 from ..pipeline import dedup as dedup_pipeline
@@ -52,16 +52,13 @@ def _keeper_rank(db: Session, media_id: int, score: float | None) -> tuple:
 
 
 class DedupBody(BaseModel):
-    use_clip: bool = True
+    use_clip: bool = False
 
 
 @router.post("/run")
 def run(body: DedupBody) -> dict:
-    if manager.is_running("dedup"):
-        raise HTTPException(409, "Dedup already running")
-    job = manager.submit("dedup", lambda h: dedup_pipeline.run(
-        use_clip=body.use_clip, progress=lambda p, m: h.update(p, m)))
-    return job.to_dict()
+    from .direct import analyze, AnalyzeBody
+    return analyze(AnalyzeBody(use_clip=body.use_clip))
 
 
 @router.get("/groups")
@@ -112,10 +109,15 @@ class KeeperBody(BaseModel):
 
 
 @router.post("/groups/{group_id}/keeper")
+@serialized
 def set_keeper(group_id: int, body: KeeperBody, db: Session = Depends(db_dependency)) -> dict:
     g = db.get(DupGroup, group_id)
     if not g:
         raise HTTPException(404, "group not found")
+    if g.reviewed:
+        raise HTTPException(409, "This group has already been reviewed")
+    if body.media_id not in {m.media_id for m in g.members}:
+        raise HTTPException(400, "Keeper must be a member of this group")
     g.keeper_media_id = body.media_id
     db.commit()
     return {"id": g.id, "keeper_media_id": g.keeper_media_id}
@@ -236,10 +238,15 @@ def _group_deletes(db: Session, g: DupGroup, excluded: set[int]) -> list[dict]:
 
 
 @router.post("/groups/{group_id}/approve")
+@serialized
 def approve(group_id: int, body: ApproveBody | None = None, db: Session = Depends(db_dependency)) -> dict:
     g = db.get(DupGroup, group_id)
     if not g:
         raise HTTPException(404, "group not found")
+    if g.reviewed:
+        raise HTTPException(409, "Group already reviewed")
+    if len(g.members) > settings.dedup_max_group_size:
+        raise HTTPException(409, "Group too large; inspect it manually")
     excluded = set((body.exclude_ids if body else None) or [])
     to_delete = _group_deletes(db, g, excluded)
 
@@ -293,7 +300,7 @@ class TrashAllBody(BaseModel):
     live_only: bool = True
 
 
-@router.post("/groups/{group_id}/trash-all")
+# Whole-group trash is deliberately disabled: cleanup always preserves a keeper.
 def trash_all(group_id: int, body: TrashAllBody | None = None,
               db: Session = Depends(db_dependency)) -> dict:
     """Queue **every** member of a group for trashing, keeper included.
@@ -436,6 +443,7 @@ class BulkApproveBody(BaseModel):
 
 
 @router.post("/approve-bulk")
+@serialized
 def approve_bulk(body: BulkApproveBody | None = None,
                  db: Session = Depends(db_dependency)) -> dict:
     """Approve many duplicate groups into ONE delete action.
@@ -447,6 +455,10 @@ def approve_bulk(body: BulkApproveBody | None = None,
     """
     body = body or BulkApproveBody()
 
+    if not body.group_ids:
+        raise HTTPException(400, "Select explicit group_ids to review")
+    if len(body.group_ids) > 50:
+        raise HTTPException(400, "Review at most 50 groups at a time")
     q = db.query(DupGroup).filter(DupGroup.reviewed.is_(False))
     if body.group_ids:
         q = q.filter(DupGroup.id.in_(body.group_ids))

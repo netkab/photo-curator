@@ -33,3 +33,9 @@ resumable batching, richer keeper selection, and Maps/video/enhance workflows.
 
 Model weights are distributed by their respective authors under their own licences and are not
 covered by this project's MIT licence. Check each project's licence before commercial use.
+
+## Cleanup adapter
+
+The reduced `gp-extension/main/commands.js` adapter derives its Google Photos library, metadata,
+trash and restore request shapes from the vendored GPTK v3.2.0 code (MIT, Copyright (c) 2024 xob0t).
+The full userscript is retained for provenance but is not loaded by this fork.

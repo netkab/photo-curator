@@ -8,20 +8,16 @@
  */
 import { h, render, send } from "../lib/dom.js";
 import * as api from "../lib/api.js";
+import { reviewTab } from "./tabs/review.js";
+import { setupTab } from "./tabs/setup.js";
 import { syncTab } from "./tabs/sync.js";
 import { dupesTab } from "./tabs/dupes.js";
-import { storageTab } from "./tabs/storage.js";
-import { enhanceTab } from "./tabs/enhance.js";
-import { mapsTab } from "./tabs/maps.js";
-import { videoTab } from "./tabs/video.js";
 
 const TABS = [
+  { id: "setup", label: "Setup", render: setupTab },
   { id: "sync", label: "Library Sync", render: syncTab },
   { id: "dupes", label: "Duplicates", render: dupesTab },
-  { id: "storage", label: "Storage", render: storageTab },
-  { id: "enhance", label: "Enhance", render: enhanceTab },
-  { id: "maps", label: "Maps", render: mapsTab },
-  { id: "video", label: "Video", render: videoTab },
+  { id: "review", label: "Review queue", render: reviewTab },
 ];
 
 const view = document.getElementById("view");
@@ -30,7 +26,7 @@ const statusText = document.getElementById("status-text");
 const dotBackend = document.getElementById("dot-backend");
 const toastEl = document.getElementById("toast");
 
-let active = location.hash.slice(1) || "sync";
+let active = location.hash.slice(1) || ((await chrome.storage.local.get("pc-token"))["pc-token"] ? "sync" : "setup");
 
 // ── event bus ───────────────────────────────────────────────────────────────
 const listeners = new Set();
@@ -71,7 +67,7 @@ async function refreshStatus() {
     dotBackend.className = "dot ok";
   } catch (err) {
     dotBackend.className = "dot bad";
-    statusText.textContent = "Backend offline";
+    statusText.textContent = "Check backend / pairing";
     statusText.title = err.message;
     return;
   }

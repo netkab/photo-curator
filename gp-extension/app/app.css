@@ -212,3 +212,11 @@ td.num { text-align: right; font-variant-numeric: tabular-nums; }
 }
 .toast.err { border-color: var(--danger); }
 .toast.ok { border-color: var(--ok); }
+
+/* Local setup and long filenames keep the existing extension palette. */
+form { display: grid; gap: 12px; max-width: 560px; }
+form input { width: 100%; min-width: 0; padding: 10px; font: inherit; }
+form button { justify-self: start; }
+.card p, .cap, code { overflow-wrap: anywhere; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+@media (max-width: 700px) { .topbar { flex-wrap: wrap; height: auto; padding: 12px; } }
