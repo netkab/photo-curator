@@ -76,8 +76,10 @@ ports and never kills existing Python/Node processes.
 2. **Fetch thumbnails and find duplicates.** Keep the signed-in Photos tab open: the extension
    downloads up to 512-pixel previews through that tab and passes image bytes to the local backend,
    never original photos or videos. Google cookies stay in Chrome. Cached items are skipped on later
-   runs. Five consecutive download failures stop the attempt with the actual error; partial progress
-   is saved. Stop is cooperative after the current request. Rescan only to refresh expired URLs.
+   runs. Keep Photo Curator open too: it requests small batches to avoid Chrome's worker time limits.
+   Five consecutive download failures stop the attempt with the actual error; partial progress
+   is saved. Animated previews are excluded for manual review. Stop is cooperative after the current
+   request. Rescan only to refresh expired URLs.
 3. **Duplicates.** Compare each proposed group and keeper, open originals in Google Photos when useful,
    pick another keeper, or mark additional photos **Keep too**. Dismiss unrelated groups. Each new
    group has a suggested keeper based on reported original dimensions, then thumbnail sharpness.

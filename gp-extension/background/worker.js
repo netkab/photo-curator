@@ -18,8 +18,15 @@ async function photosTab() {
   return live[0];
 }
 async function callPage(tabId, command, args = {}) {
-  const result = await chrome.scripting.executeScript({target: {tabId}, world: "MAIN", func: pageCommand,
-                                                       args: [command, args]});
+  const execution = chrome.scripting.executeScript({target: {tabId}, world: "MAIN", func: pageCommand,
+                                                   args: [command, args]});
+  let timer;
+  let result;
+  try {
+    result = command === "fetchThumbnail" ? await Promise.race([execution, new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error("Google preview timed out; keep the Photos tab open and retry")), 20000);
+    })]) : await execution;
+  } finally {clearTimeout(timer);}
   const res = result?.[0]?.result;
   if (!res?.ok) throw new Error(res?.error || "Google Photos tab closed or navigation interrupted the request");
   return res.result;
@@ -98,17 +105,19 @@ async function runOperation(id) {
     return {ok: true, op: final};
   } finally {runningOp = null;}
 }
-async function fetchThumbnails() {
+async function fetchThumbnails({after = 0} = {}) {
   if (scanning || runningOp) throw new Error("Wait for the current scan or operation to finish");
+  if (!Number.isSafeInteger(after) || after < 0) throw new Error("Invalid thumbnail cursor");
   scanning = true; cancelScan = false;
-  let after = 0, cached = 0, failed = 0, skipped = 0, consecutiveFailures = 0;
+  let cached = 0, failed = 0, skipped = 0, consecutiveFailures = 0;
   try {
     const tab = await photosTab();
     const h = await callPage(tab.id, "healthCheck");
     if (!h.authed) throw new Error("Sign in to Google Photos and reload the tab");
-    for (;;) {
-      const {items} = await api.get(`/api/direct/thumbnail-queue?after=${after}&limit=50`);
-      if (!items.length) return {ok: true, cached, failed, skipped};
+    // Keep each extension message below Chrome's long-running event limit.
+    // The app requests another small batch; each saved image is already durable.
+      const {items} = await api.get(`/api/direct/thumbnail-queue?after=${after}&limit=10`);
+      if (!items.length) return {ok: true, cached, failed, skipped, more: false, after};
       for (const item of items) {
         if (cancelScan) return {ok: true, cancelled: true, cached, failed};
         if (item.account !== h.account) throw new Error("Google account does not match the catalog");
@@ -127,7 +136,7 @@ async function fetchThumbnails() {
         consecutiveFailures = 0; after = item.media_id;
         broadcast({type: "thumbnail:progress", cached, failed, skipped});
       }
-    }
+      return {ok: true, cached, failed, skipped, more: true, after};
   } finally {scanning = false;}
 }
 async function getImage(url) {
@@ -138,7 +147,7 @@ async function getImage(url) {
   return {ok: true, dataUrl: `data:${blob.type};base64,${btoa(text)}`};
 }
 const routes = {
-  PC_HEALTH: () => health(), PC_SCAN: m => scan(m.args), PC_FETCH_THUMBNAILS: () => fetchThumbnails(),
+  PC_HEALTH: () => health(), PC_SCAN: m => scan(m.args), PC_FETCH_THUMBNAILS: m => fetchThumbnails(m.args),
   PC_SCAN_CANCEL: () => {cancelScan = true; return {ok: true};},
   PC_RUN_OP: m => runOperation(m.opId), GET_IMAGE: m => getImage(m.url),
 };

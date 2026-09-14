@@ -37,12 +37,18 @@ export function onWorkerEvent(fn) {
   return () => listeners.delete(fn);
 }
 
-const port = chrome.runtime.connect({ name: "pc-app" });
-port.onMessage.addListener((msg) => {
-  for (const fn of listeners) {
-    try { fn(msg); } catch (err) { console.error("[photo-curator] listener failed", err); }
-  }
-});
+function connectProgress() {
+  try {
+    const port = chrome.runtime.connect({ name: "pc-app" });
+    port.onMessage.addListener((msg) => {
+      for (const fn of listeners) {
+        try { fn(msg); } catch (err) { console.error("[photo-curator] listener failed", err); }
+      }
+    });
+    port.onDisconnect.addListener(() => setTimeout(connectProgress, 1000));
+  } catch { /* Extension was reloaded: reopen this page. */ }
+}
+connectProgress();
 
 // ── toast ───────────────────────────────────────────────────────────────────
 let toastTimer = null;

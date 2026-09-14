@@ -25,7 +25,7 @@ export async function pageCommand(command, args = {}) {
       url.search = new URLSearchParams({authuser: pathAccount}).toString();
       url.hash = "";
       const response = await fetch(url.href, {credentials: "include", redirect: "error",
-                                             signal: AbortSignal.timeout(30000)});
+                                             signal: AbortSignal.timeout(15000)});
       if (!response.ok) throw new Error(`Google thumbnail HTTP ${response.status}; reload Photos or rescan to refresh previews`);
       if (!response.headers.get("Content-Type")?.toLowerCase().startsWith("image/"))
         throw new Error("Google thumbnail response is not an image");

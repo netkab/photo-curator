@@ -6,10 +6,13 @@ export async function syncTab(root, ctx) {
   const summary = h("p");
   let analysisId = null;
   let fetchingThumbnails = false;
+  let stopRequested = false;
+  let previewTotals = {cached: 0, failed: 0, skipped: 0};
   let disposed = false;
   const scan = h("button.primary", {onclick: () => start(false)}, "Scan / resume library");
   const restart = h("button", {onclick: () => start(true)}, "Rescan from newest");
   const stop = h("button", {onclick: async () => {
+    stopRequested = true;
     await send({type: "PC_SCAN_CANCEL"});
     if (analysisId) await api.post(`/api/jobs/${analysisId}/cancel`);
     const target = analysisId || fetchingThumbnails ? status : scanStatus;
@@ -41,11 +44,22 @@ export async function syncTab(root, ctx) {
     busy(true);
     try {
       fetchingThumbnails = true;
+      stopRequested = false;
+      previewTotals = {cached: 0, failed: 0, skipped: 0};
       status.textContent = "Fetching previews through your signed-in Google Photos tab…";
-      const fetched = await send({type: "PC_FETCH_THUMBNAILS"});
+      let after = 0;
+      for (;;) {
+        const fetched = await send({type: "PC_FETCH_THUMBNAILS", args: {after}});
+        if (!fetched?.ok) throw new Error(fetched?.error || "Thumbnail downloads failed");
+        if (disposed) return;
+        if (stopRequested || fetched.cancelled) {status.textContent = "Stopped. Downloaded previews are saved; click Fetch thumbnails to resume."; return;}
+        for (const key of ["cached", "failed", "skipped"]) previewTotals[key] += fetched[key] || 0;
+        status.textContent = `Downloaded ${fmtInt(previewTotals.cached)} previews; ${fmtInt(previewTotals.skipped)} animated previews skipped; ${fmtInt(previewTotals.failed)} unavailable.`;
+        if (!fetched.more) break;
+        if (fetched.after <= after) throw new Error("Thumbnail cursor did not advance; stopped safely");
+        after = fetched.after;
+      }
       fetchingThumbnails = false;
-      if (!fetched?.ok) throw new Error(fetched?.error || "Thumbnail downloads failed");
-      if (fetched.cancelled) {status.textContent = "Stopped. Downloaded previews are saved; click Fetch thumbnails to resume."; return;}
       const j = await api.post("/api/direct/analyze", {use_clip: clip.checked, cached_only: true});
       analysisId = j.id;
       for (;;) {
@@ -70,7 +84,7 @@ export async function syncTab(root, ctx) {
     if (msg.type === "scan:page") scanStatus.textContent = `Saved page ${msg.pages}: ${fmtInt(msg.total)} items.`;
     if (msg.type === "scan:retry") scanStatus.textContent = `Read failed; retrying (${msg.attempt}/3). ${msg.error}`;
     if (msg.type === "scan:error") scanStatus.textContent = msg.error;
-    if (msg.type === "thumbnail:progress") status.textContent = `Downloaded ${fmtInt(msg.cached)} previews; ${fmtInt(msg.skipped)} animations skipped; ${fmtInt(msg.failed)} unavailable.` + (msg.error ? ` ${msg.error}` : "");
+    if (msg.type === "thumbnail:progress") status.textContent = `Downloaded ${fmtInt(previewTotals.cached + (msg.cached || 0))} previews; ${fmtInt(previewTotals.skipped + (msg.skipped || 0))} animated previews skipped; ${fmtInt(previewTotals.failed + (msg.failed || 0))} unavailable.` + (msg.error ? ` ${msg.error}` : "");
     if (msg.type === "thumbnail:error") status.textContent = msg.error;
   });
   render(root, h("div.card", h("h2", "Scan your Google Photos library"),

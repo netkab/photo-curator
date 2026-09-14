@@ -4,8 +4,8 @@ Tested locally on macOS ARM64 with Python 3.12 and Node 26.3.0.
 
 | Check | Result |
 |---|---|
-| Backend regression suite | 37 passed |
-| Extension RPC/manifest regression suite | 12 passed |
+| Backend regression suite | 38 passed |
+| Extension RPC/manifest regression suite | 14 passed |
 | TypeScript and Vite production build | Passed |
 | Installed Python dependency compatibility (`pip check`) | Passed |
 | Updated frontend dependency audit | 0 reported vulnerabilities |
@@ -50,7 +50,7 @@ folder, reload Photo Curator at `chrome://extensions` (version 3.0.1), then relo
 its app tab and the Google Photos tab. Use **Scan / resume library**. This patch does
 not require a backend restart or catalog reset.
 
-## GitHub CI
+## Thumbnail downloads — extension 3.0.2
 
 Thumbnail download follow-up (3.0.2): a real catalog contained 18,679 photos and 706 videos.
 Every photo used the newer `photos.fife.usercontent.google.com` host. The old allowlist rejected
@@ -58,7 +58,18 @@ it; three bounded, unauthenticated download probes then returned HTTP 403. The e
 fetches previews through the signed-in Photos tab and sends only bounded image bytes to the
 authenticated local cache endpoint. Tests cover host restrictions, browser credentials, no
 redirects, account changes, oversized responses, authenticated uploads, resumable cache reuse,
-and retaining previous groups when every download fails. All 37 backend and 12 extension tests pass.
+and retaining previous groups when every download fails. Animated previews are cataloged for manual
+review and excluded from matching without aborting other downloads. Download messages process ten
+items at a time, with durable cache reuse and an outer timeout; the UI reconnects its progress port.
+All 38 backend and 14 extension tests pass.
+
+The installed extension and backend were then exercised on the user's existing local catalog.
+Authenticated downloads, local image decoding, and pHash calculation succeeded for 36 real previews
+in the bounded verification run. Stop retained the cache. The full scan of 19,385 items was also
+confirmed by the user. Full-library duplicate results and Google mutations have not been verified.
+No photo was trashed or restored during debugging.
+
+## GitHub CI
 
 `.ci/cleanup.yml` is a ready-to-use GitHub Actions template for the backend tests, extension tests,
 frontend build and npm audit. It is not active. Creation at `.github/workflows/cleanup.yml` was rejected
