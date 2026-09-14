@@ -4,8 +4,8 @@ Tested locally on macOS ARM64 with Python 3.12 and Node 26.3.0.
 
 | Check | Result |
 |---|---|
-| Backend regression suite | 40 passed |
-| Extension RPC/manifest regression suite | 14 passed |
+| Backend regression suite | 42 passed |
+| Extension RPC/manifest regression suite | 15 passed |
 | TypeScript and Vite production build | Passed |
 | Installed Python dependency compatibility (`pip check`) | Passed |
 | Updated frontend dependency audit | 0 reported vulnerabilities |
@@ -83,7 +83,25 @@ previews in that check. The full resumed download is still in progress. Regressi
 two-image MPO (matching only the primary image), true GIF animation exclusion, and idempotent
 requeue with existing cached previews retained. All 40 backend and 14 extension tests pass.
 
-## GitHub CI setup
+## Ownership filtering — extension 3.0.4
+
+Analysis and the browser download queue default to `owned_only=true`, excluding both false and
+unknown ownership before fetching, embedding, and matching. Cached non-owned previews are also
+excluded. The Library Sync checkbox can opt into wider analysis, while trash approval still requires
+owned targets. A pending review can be narrowed using `keep-unowned`, preserving excluded content
+and original keepers as protected items. This does not approve the review or create an operation.
+
+All 42 backend and 15 extension tests pass, including default filtering, opt-out propagation,
+cached-preview filtering, and pending-review edits with protected exclusions. The interface detector
+reported no findings. Native browser reload/visual verification was interrupted by concurrent user
+activity; the extension needs reloading to display the new checkbox and review-edit button.
+
+On the existing catalog, review #1 remained pending with 28 eligible targets and 83 protected keys
+(the original 50 keepers plus 33 excluded targets). No operation was created. A cached-only analysis
+excluded 7,825 catalog items and produced 558 unreviewed candidate groups from 11,075 cached owned
+previews; two owned previews were unavailable. Existing reviewed groups were retained.
+
+## GitHub CI configuration
 
 `.ci/cleanup.yml` is a ready-to-use GitHub Actions template for the backend tests, extension tests,
 frontend build and npm audit. It is not active. Creation at `.github/workflows/cleanup.yml` was rejected
