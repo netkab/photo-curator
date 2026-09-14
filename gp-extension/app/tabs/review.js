@@ -29,12 +29,14 @@ export async function reviewTab(root, ctx) {
     const cards = [];
     for (const action of actions.slice(0, 50)) {
       const p = action.payload;
-      const keepers = [...new Set([p.keeper_media_id, ...(p.items || []).map(i => i.keeper_media_id)].filter(Boolean))];
+      const keepers = [...new Set([p.keeper_media_id, ...(p.kept_media_ids || []), ...(p.items || []).map(i => i.keeper_media_id)].filter(Boolean))];
       const tiles = await Promise.all([...keepers.map(id => tile(id, "KEEP")),
         ...(p.items || []).map(i => tile(i.media_id, "PROPOSED TRASH"))]);
       cards.push(h("section.card", h("h2", `Review ${action.id} · ${action.status}`),
         h("p.sub", p.reason || "Duplicate candidates"), h("div.row", tiles),
+        p.ownership_excluded_media_ids?.length ? h("p.sub", `${p.ownership_excluded_media_ids.length} photos kept because ownership is shared or unknown. ${p.items.length} photos remain selected for trash.`) : null,
         h("div.row",
+          action.status === "pending" && h("button", {onclick: () => act(action, "keep-unowned")}, "Keep photos I don’t own"),
           action.status === "pending" && h("button.primary", {onclick: () => act(action, "approve")}, "Approve this selection"),
           action.status === "approved" && h("button.primary", {onclick: () => act(action, "apply")}, "Queue dry run"),
           action.status === "approved" && h("button.danger", {onclick: () => act(action, "apply", true)}, "Queue reviewed trash…"),

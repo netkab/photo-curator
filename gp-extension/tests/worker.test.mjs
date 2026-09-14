@@ -2,7 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 const account='test@example.invalid';
 const app='chrome-extension://'+ 'a'.repeat(32) + '/app/app.html';
-async function setup(fail=false) {
+async function setup(fail=false, ownedOnly=true) {
   let listener, downloads=0, uploads=0;
   globalThis.chrome={
     runtime:{id:'a'.repeat(32),getURL:()=>app,onConnect:{addListener(){}},
@@ -23,6 +23,7 @@ async function setup(fail=false) {
     let result;
     if(url.pathname==='/api/direct/thumbnail-queue') {
       assert.equal(url.searchParams.get('limit'),'10');
+      assert.equal(url.searchParams.get('owned_only'),String(ownedOnly));
       const after=Number(url.searchParams.get('after'));
       result={items:Array.from({length:12},(_,i)=>({media_id:i+1,account,url:'https://photos.fife.usercontent.google.com/fake'})).filter(i=>i.media_id>after).slice(0,10)};
     } else {assert.match(url.pathname,/^\/api\/direct\/thumbnails\/\d+$/);uploads++;result={cached:true};}
@@ -47,4 +48,8 @@ test('repeated Google download failures stop before attempting the whole batch',
   const r=await send({after:0});
   assert.equal(r.ok,false);assert.match(r.error,/5 consecutive failures.*403/);
   assert.deepEqual(counts(),{downloads:5,uploads:0});
+});
+test('explicitly including non-owned previews reaches the backend filter',async()=>{
+  const {send}=await setup(false,false);
+  assert.equal((await send({after:0,ownedOnly:false})).ok,true);
 });

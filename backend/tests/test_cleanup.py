@@ -372,3 +372,43 @@ def test_legacy_animation_classifications_are_requeued_without_losing_cached_ima
         assert s.query(Media).filter(Media.media_type=='animation').count()==0
         assert s.get(Media,cached_id).thumb_path
     assert len(client.get('/api/direct/thumbnail-queue').json()['items'])==2
+
+def test_owned_only_downloads_and_matching_default_exclude_shared_and_unknown(client,monkeypatch):
+    sync(client)
+    with session_scope() as s:
+        rows=s.query(GpItem).order_by(GpItem.id).all()
+        rows[1].is_owned=False;rows[2].is_owned=None
+        owned_id=rows[0].media_id
+    queue=client.get('/api/direct/thumbnail-queue').json()['items']
+    assert [i['media_id'] for i in queue]==[owned_id]
+    assert len(client.get('/api/direct/thumbnail-queue?owned_only=false').json()['items'])==3
+    calls=[]
+    monkeypatch.setattr(direct,'fetch_thumbnail',lambda url:(calls.append(url),photo())[1])
+    r=direct.analyze(Handle())
+    assert len(calls)==1 and r['cached']==1 and r['ownership_excluded']==2 and r['groups']==0
+    # Even cached non-owned previews must not leak into default matching or become keepers.
+    r=direct.analyze(Handle(),owned_only=False)
+    assert r['groups']==1 and len(calls)==3
+    r=direct.analyze(Handle(),cached_only=True)
+    assert r['groups']==0 and r['ownership_excluded']==2
+    with session_scope() as s: assert s.query(DupGroup).count()==0
+
+def test_keep_unowned_narrows_pending_review_and_protects_exclusions(client):
+    aid,ids=review(client)
+    with session_scope() as s:
+        s.query(GpItem).filter(GpItem.media_id==ids[2]).one().is_owned=False
+    assert client.post(f'/api/review/{aid}/approve').status_code==409
+    result=client.post(f'/api/review/{aid}/keep-unowned').json()
+    assert result=={'id':aid,'status':'pending','selected':1,'excluded':1}
+    with session_scope() as s:
+        action=s.get(ReviewAction,aid);p=json.loads(action.payload)
+        assert action.status=='pending' and s.query(GpOperation).count()==0
+        assert [i['media_id'] for i in p['items']]==[ids[1]]
+        assert set(p['kept_media_ids'])=={ids[0],ids[2]}
+    assert client.post(f'/api/review/{aid}/keep-unowned').json()['selected']==1
+    assert client.post(f'/api/review/{aid}/approve').status_code==200
+    with session_scope() as s:
+        p=json.loads(s.get(ReviewAction,aid).payload)
+        assert p['approved_keys']==['key-1']
+        assert set(p['protected_keys'])=={'key-0','key-2'}
+    assert client.post(f'/api/review/{aid}/keep-unowned').status_code==409

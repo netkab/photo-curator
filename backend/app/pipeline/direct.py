@@ -100,10 +100,14 @@ def save_thumbnail(media, raw):
     media.analyzed_at = datetime.utcnow()
     media.preview_skip_reason = None
 
-def analyze(handle, use_clip=False, cached_only=False):
+def analyze(handle, use_clip=False, cached_only=False, owned_only=True):
     # Cache one image at a time; each commit survives a stop/restart. No original downloads.
     with session_scope() as s:
-        ids = [g.id for g in s.query(GpItem).filter(GpItem.trashed.is_(False)).all()]
+        query = s.query(GpItem).filter(GpItem.trashed.is_(False))
+        ownership_excluded = query.filter(GpItem.is_owned.is_not(True)).count() if owned_only else 0
+        if owned_only:
+            query = query.filter(GpItem.is_owned.is_(True))
+        ids = [g.id for g in query.all()]
     cached = skipped = already_cached = 0
     errors = []
     for index, gid in enumerate(ids):
@@ -133,13 +137,14 @@ def analyze(handle, use_clip=False, cached_only=False):
         raise ValueError(f"No photos could be analyzed: {len(errors)} thumbnail downloads failed. "
                          f"First error: {errors[0]['error']}. Saved catalog and previous groups are retained.")
     if use_clip:
-        embed(handle)
-    groups = cluster(handle, use_clip)
+        embed(handle, owned_only)
+    groups = cluster(handle, use_clip, owned_only)
     return {"cached": cached, "already_cached": already_cached,
             "skipped": skipped, "failed": len(errors), "errors": errors[:50],
-            "groups": groups, "evidence": "thumbnails only; original equality is unknown"}
+            "groups": groups, "ownership_excluded": ownership_excluded,
+            "evidence": "thumbnails only; original equality is unknown"}
 
-def embed(handle):
+def embed(handle, owned_only=True):
     # Explicit opt-in; a user-provided local checkpoint prevents implicit model downloads.
     import os
     checkpoint = Path(os.environ.get("PC_CLIP_CHECKPOINT", ""))
@@ -150,8 +155,12 @@ def embed(handle):
     model, _, preprocess = open_clip.create_model_and_transforms("ViT-B-32", pretrained=str(checkpoint))
     model.eval()
     with session_scope() as s:
-        rows = s.query(Media).filter(Media.source == "google-photos-thumbnail",
-                    Media.thumb_path.isnot(None), Media.clip_embedding.is_(None)).all()
+        query = s.query(Media).join(GpItem, GpItem.media_id == Media.id).filter(
+                    Media.source == "google-photos-thumbnail", GpItem.trashed.is_(False),
+                    Media.thumb_path.isnot(None), Media.clip_embedding.is_(None))
+        if owned_only:
+            query = query.filter(GpItem.is_owned.is_(True))
+        rows = query.all()
         for i, m in enumerate(rows):
             if handle.cancelled:
                 return
@@ -162,14 +171,15 @@ def embed(handle):
             s.commit()
             handle.update(0.65 + 0.2 * (i + 1) / max(1, len(rows)), "Computing local CLIP embeddings")
 
-def cluster(handle, use_clip=False):
+def cluster(handle, use_clip=False, owned_only=True):
     with session_scope() as s:
         reviewed_ids = {i for (i,) in s.query(DupMember.media_id).join(DupGroup)
                         .filter(DupGroup.reviewed.is_(True)).all()}
         rows = (s.query(Media, GpItem).join(GpItem, GpItem.media_id == Media.id)
                 .filter(Media.source == "google-photos-thumbnail", Media.phash.isnot(None),
                         GpItem.trashed.is_(False)).all())
-        rows = [(m, g) for m, g in rows if m.id not in reviewed_ids]
+        rows = [(m, g) for m, g in rows if m.id not in reviewed_ids
+                and (not owned_only or g.is_owned is True)]
         # Stronger-quality metadata is only a suggestion; dimensions refer to originals, not cache.
         rows.sort(key=lambda pair: ((pair[0].width or 0) * (pair[0].height or 0),
                                    pair[0].blur_score or 0, -pair[0].id), reverse=True)

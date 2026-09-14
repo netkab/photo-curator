@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Photo Curator \u2014 Google Photos Bridge",
-  "version": "3.0.3",
+  "version": "3.0.4",
   "description": "Local thumbnail analysis, reviewed trash and undo. No Takeout required.",
   "permissions": [
     "storage",

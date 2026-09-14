@@ -105,7 +105,7 @@ async function runOperation(id) {
     return {ok: true, op: final};
   } finally {runningOp = null;}
 }
-async function fetchThumbnails({after = 0} = {}) {
+async function fetchThumbnails({after = 0, ownedOnly = true} = {}) {
   if (scanning || runningOp) throw new Error("Wait for the current scan or operation to finish");
   if (!Number.isSafeInteger(after) || after < 0) throw new Error("Invalid thumbnail cursor");
   scanning = true; cancelScan = false;
@@ -116,7 +116,7 @@ async function fetchThumbnails({after = 0} = {}) {
     if (!h.authed) throw new Error("Sign in to Google Photos and reload the tab");
     // Keep each extension message below Chrome's long-running event limit.
     // The app requests another small batch; each saved image is already durable.
-      const {items} = await api.get(`/api/direct/thumbnail-queue?after=${after}&limit=10`);
+      const {items} = await api.get(`/api/direct/thumbnail-queue?after=${after}&limit=10&owned_only=${ownedOnly !== false}`);
       if (!items.length) return {ok: true, cached, failed, skipped, more: false, after};
       for (const item of items) {
         if (cancelScan) return {ok: true, cancelled: true, cached, failed};

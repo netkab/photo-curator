@@ -81,9 +81,15 @@ ports and never kills existing Python/Node processes.
    is saved. Animated previews are excluded for manual review. Multi-picture JPEG (MPO) previews
    use their primary still image; embedded auxiliary images are not treated as animation. Stop is cooperative after the current
    request. Rescan only to refresh expired URLs.
+   **Only photos I own** is checked by default: shared and unknown ownership are excluded before
+   downloads, embeddings and matching, including already-cached previews. Unchecking it includes
+   those photos in analysis but does not bypass the ownership requirement for trash approval.
 3. **Duplicates.** Compare each proposed group and keeper, open originals in Google Photos when useful,
    pick another keeper, or mark additional photos **Keep too**. Dismiss unrelated groups. Each new
    group has a suggested keeper based on reported original dimensions, then thumbnail sharpness.
+   If an older pending review contains non-owned photos, **Review queue → Keep photos I don’t own**
+   removes them from the trash selection and protects their content keys. The review remains pending
+   until you explicitly approve its revised selection; no operation is created by this edit.
 4. **Dry run is always the initial choice.** It exercises account checks, batching and durable result
    accounting without issuing a mutation. A successful dry run does not disable dry-run mode and does
    not consume the group's review state.

@@ -12,21 +12,24 @@ router = APIRouter(prefix="/api/direct", tags=["direct cleanup"])
 class AnalyzeBody(BaseModel):
     use_clip: bool = False
     cached_only: bool = False
+    owned_only: bool = True
 @router.post("/analyze")
 @serialized
 def analyze(body: AnalyzeBody | None = None):
     if manager.is_running("direct-analysis"):
         raise HTTPException(409, "Thumbnail analysis is already running")
     body = body or AnalyzeBody()
-    return manager.submit("direct-analysis", lambda h: direct.analyze(h, body.use_clip, body.cached_only)).to_dict()
+    return manager.submit("direct-analysis", lambda h: direct.analyze(h, body.use_clip, body.cached_only, body.owned_only)).to_dict()
 
 @router.get("/thumbnail-queue")
-def thumbnail_queue(after: int = Query(0, ge=0), limit: int = Query(50, ge=1, le=100)):
+def thumbnail_queue(after: int = Query(0, ge=0), limit: int = Query(50, ge=1, le=100), owned_only: bool = True):
     with session_scope() as s:
         rows = (s.query(Media, GpItem).join(GpItem, GpItem.media_id == Media.id)
                 .filter(Media.source == "google-photos-thumbnail", Media.media_type == "photo",
                         Media.preview_skip_reason.is_(None),
                         GpItem.trashed.is_(False), Media.id > after).order_by(Media.id))
+        if owned_only:
+            rows = rows.filter(GpItem.is_owned.is_(True))
         items = []
         for m, g in rows.yield_per(100):
             if m.thumb_path and (settings.thumbs_dir / m.thumb_path).is_file():

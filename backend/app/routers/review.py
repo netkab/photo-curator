@@ -48,6 +48,7 @@ def reviewed_targets(db: Session, a: ReviewAction) -> tuple[str, list[str], list
     payload = json.loads(a.payload)
     items = payload.get("items", [])
     keeper_ids = {payload.get("keeper_media_id")} | {i.get("keeper_media_id") for i in items}
+    keeper_ids.update(payload.get("kept_media_ids", []))
     keeper_ids.discard(None)
     if not keeper_ids:
         raise HTTPException(409, "Cleanup requires a surviving keeper")
@@ -73,6 +74,35 @@ def reviewed_targets(db: Session, a: ReviewAction) -> tuple[str, list[str], list
     if any(g.media_id not in ids for g in aliases):
         raise HTTPException(409, "A selected content key also identifies an unselected photo")
     return account, keys, sorted(protected)
+
+
+@router.post("/{action_id}/keep-unowned")
+@serialized
+def keep_unowned(action_id: int, db: Session = Depends(db_dependency)) -> dict:
+    """Narrow a pending selection; never approve it or create an operation."""
+    a = _get(db, action_id)
+    if a.status != "pending" or a.kind != "delete":
+        raise HTTPException(409, "Only pending cleanup reviews can be edited")
+    if db.query(GpOperation).filter(GpOperation.review_action_id == a.id).first():
+        raise HTTPException(409, "This review already has an operation; create a new review")
+    payload = json.loads(a.payload)
+    items = payload.get("items", [])
+    ids = {i["media_id"] for i in items}
+    owned = {g.media_id for g in db.query(GpItem).filter(GpItem.media_id.in_(ids),
+             GpItem.is_owned.is_(True), GpItem.trashed.is_(False))}
+    excluded = ids - owned
+    kept = set(payload.get("kept_media_ids", [])) | excluded
+    kept.update(i.get("keeper_media_id") for i in items)
+    kept.add(payload.get("keeper_media_id"))
+    kept.discard(None)
+    payload["items"] = [i for i in items if i["media_id"] in owned and i["media_id"] not in kept]
+    payload["kept_media_ids"] = sorted(kept)
+    payload["ownership_excluded_media_ids"] = sorted(set(payload.get("ownership_excluded_media_ids", [])) | excluded)
+    for field in ("approved_account", "approved_keys", "protected_keys"):
+        payload.pop(field, None)
+    a.payload = json.dumps(payload)
+    db.commit()
+    return {"id": a.id, "status": a.status, "selected": len(payload["items"]), "excluded": len(excluded)}
 
 
 @router.post("/{action_id}/approve")

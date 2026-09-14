@@ -19,8 +19,9 @@ export async function syncTab(root, ctx) {
     target.textContent = "Stopping after the current page or thumbnail. Saved progress is retained.";
   }}, "Stop");
   const clip = h("input", {type: "checkbox"});
+  const ownedOnly = h("input", {type: "checkbox", checked: true});
   const analyze = h("button.primary", {onclick: runAnalysis}, "Fetch thumbnails and find duplicates");
-  function busy(on) {scan.disabled = restart.disabled = analyze.disabled = on;}
+  function busy(on) {scan.disabled = restart.disabled = analyze.disabled = ownedOnly.disabled = clip.disabled = on;}
   async function refresh() {
     try {
       const s = await api.gpStatus();
@@ -49,7 +50,7 @@ export async function syncTab(root, ctx) {
       status.textContent = "Fetching previews through your signed-in Google Photos tab…";
       let after = 0;
       for (;;) {
-        const fetched = await send({type: "PC_FETCH_THUMBNAILS", args: {after}});
+        const fetched = await send({type: "PC_FETCH_THUMBNAILS", args: {after, ownedOnly: ownedOnly.checked}});
         if (!fetched?.ok) throw new Error(fetched?.error || "Thumbnail downloads failed");
         if (disposed) return;
         if (stopRequested || fetched.cancelled) {status.textContent = "Stopped. Downloaded previews are saved; click Fetch thumbnails to resume."; return;}
@@ -60,7 +61,7 @@ export async function syncTab(root, ctx) {
         after = fetched.after;
       }
       fetchingThumbnails = false;
-      const j = await api.post("/api/direct/analyze", {use_clip: clip.checked, cached_only: true});
+      const j = await api.post("/api/direct/analyze", {use_clip: clip.checked, cached_only: true, owned_only: ownedOnly.checked});
       analysisId = j.id;
       for (;;) {
         const current = await api.job(j.id);
@@ -72,6 +73,7 @@ export async function syncTab(root, ctx) {
           status.textContent = `${current.status}: ${fmtInt(result.groups)} candidate groups; ` +
             `${fmtInt((result.cached || 0) + (result.already_cached || 0))} previews available locally; ` +
             `${fmtInt(result.failed)} unavailable thumbnails. Open Duplicates to review.`;
+          if (result.ownership_excluded) status.textContent += ` ${fmtInt(result.ownership_excluded)} catalog items excluded because ownership is shared or unknown.`;
           if (result.failed) status.textContent += ` First download error: ${result.errors?.[0]?.error || "Unknown"}. Retry analysis after resolving this error.`;
           break;
         }
@@ -92,6 +94,8 @@ export async function syncTab(root, ctx) {
     h("div.row", scan, restart, stop), scanStatus, summary),
     h("div.card", h("h2", "Find similar photos locally"),
     h("p.sub", "Keep Google Photos open while 512-pixel previews download through your browser. Saved previews are reused when you resume. Videos are cataloged but excluded. Check originals before trashing any suggested matches."),
+    h("label.check", ownedOnly, "Only photos I own"),
+    h("p.sub", "Excludes photos marked as shared or with unknown ownership from preview downloads and duplicate matching."),
     h("label.check", clip, "Also use local CLIP embeddings (requires the optional model setup)"),
     h("div.row", analyze), status));
   await refresh();
