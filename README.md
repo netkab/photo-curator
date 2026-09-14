@@ -26,7 +26,7 @@ The extension has no build step and includes the entire scan/review/undo workflo
    ```
 
    On Windows use `py -3.12 -m venv .venv`, then `.\.venv\Scripts\Activate.ps1` instead.
-   The cleanup requirements pin direct and transitive dependencies. They do not yet have artifact hashes.
+   The cleanup requirements pin the tested macOS dependencies, including transitive packages. Other platforms may resolve additional platform-specific packages. Artifact hashes are not yet included.
    Do not run the legacy GPU/model setup script for this workflow.
 
 2. Open `chrome://extensions`, turn on Developer mode, choose **Load unpacked**, and select
@@ -162,6 +162,7 @@ keeper aliases, unknown ownership, dry-run defaults, batch leases, result valida
 Undo, thumbnail limits and resumable analysis. JavaScript tests check the pinned RPC shapes, metadata
 parser fixtures, dry-run short-circuits, account changes and rejected commands. These are synthetic
 regression tests, not evidence that today's Google internal API works on your account.
+See [validation results](docs/VALIDATION.md), including the inactive CI template and remaining manual checks.
 
 ## Scope and upstream code
 
