@@ -78,7 +78,8 @@ ports and never kills existing Python/Node processes.
    never original photos or videos. Google cookies stay in Chrome. Cached items are skipped on later
    runs. Keep Photo Curator open too: it requests small batches to avoid Chrome's worker time limits.
    Five consecutive download failures stop the attempt with the actual error; partial progress
-   is saved. Animated previews are excluded for manual review. Stop is cooperative after the current
+   is saved. Animated previews are excluded for manual review. Multi-picture JPEG (MPO) previews
+   use their primary still image; embedded auxiliary images are not treated as animation. Stop is cooperative after the current
    request. Rescan only to refresh expired URLs.
 3. **Duplicates.** Compare each proposed group and keeper, open originals in Google Photos when useful,
    pick another keeper, or mark additional photos **Keep too**. Dismiss unrelated groups. Each new

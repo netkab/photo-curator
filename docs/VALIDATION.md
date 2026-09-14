@@ -4,7 +4,7 @@ Tested locally on macOS ARM64 with Python 3.12 and Node 26.3.0.
 
 | Check | Result |
 |---|---|
-| Backend regression suite | 38 passed |
+| Backend regression suite | 40 passed |
 | Extension RPC/manifest regression suite | 14 passed |
 | TypeScript and Vite production build | Passed |
 | Installed Python dependency compatibility (`pip check`) | Passed |
@@ -69,7 +69,21 @@ in the bounded verification run. Stop retained the cache. The full scan of 19,38
 confirmed by the user. Full-library duplicate results and Google mutations have not been verified.
 No photo was trashed or restored during debugging.
 
-## GitHub CI
+## Multi-picture JPEG classification — extension 3.0.3
+
+The follow-up run exposed a classification bug: counting embedded images as animation also
+excluded still MPO/JPEG previews. Pillow reports multiple frames for this container. The pipeline
+now decodes the primary MPO image and continues excluding actual animated previews from matching.
+Preview format and skip reason are stored separately from the original media type. Startup
+requeues the old `animation` classifications for direct-catalog items without erasing cached images
+or review decisions. The catalog was backed up locally before applying this migration.
+
+Live verification recovered 875 previously skipped items; all decoded as MPO, with no new skipped
+previews in that check. The full resumed download is still in progress. Regression tests cover a
+two-image MPO (matching only the primary image), true GIF animation exclusion, and idempotent
+requeue with existing cached previews retained. All 40 backend and 14 extension tests pass.
+
+## GitHub CI setup
 
 `.ci/cleanup.yml` is a ready-to-use GitHub Actions template for the backend tests, extension tests,
 frontend build and npm audit. It is not active. Creation at `.github/workflows/cleanup.yml` was rejected
