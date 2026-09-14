@@ -5,7 +5,7 @@ Tested locally on macOS ARM64 with Python 3.12 and Node 26.3.0.
 | Check | Result |
 |---|---|
 | Backend regression suite | 30 passed |
-| Extension RPC/manifest regression suite | 7 passed |
+| Extension RPC/manifest regression suite | 10 passed |
 | TypeScript and Vite production build | Passed |
 | Installed Python dependency compatibility (`pip check`) | Passed |
 | Updated frontend dependency audit | 0 reported vulnerabilities |
@@ -29,6 +29,26 @@ No tests failed. Optional CLIP inference with real model weights, current signed
 behavior, Google trash/restore outcomes, Windows/Linux runtime behavior, and large-library performance
 have not been validated. The optional CLIP similarity/time-window logic is covered with synthetic
 embeddings; that does not validate model quality.
+
+## Scan HTTP 405 fix — extension 3.0.1
+
+A real scan reported HTTP 405 before any page reached `/api/gp/sync`. The adapter had
+incorrectly derived the RPC root from the visible account route (`/u/N/`). It now uses
+Google's `WIZ_global_data.eptZe`, as the vendored Toolkit does, restricted to PhotosUi
+service roots on the fixed Google Photos host. The original synthetic fixture shared
+the wrong URL assumption and therefore did not catch this defect.
+
+Regression tests now cover the supplied default and account-specific service roots,
+rejection of missing/unsafe roots before credentials are sent, and useful HTTP errors
+without credentials. All 10 extension tests and 30 backend tests passed after this fix.
+Scan errors and retry progress now appear beside the Scan button, separately from
+thumbnail analysis status. A successful scan against a signed-in account still needs
+to be verified; these regression tests use synthetic responses.
+
+To update an existing installation, run `git pull --ff-only` in its `photo-curator`
+folder, reload Photo Curator at `chrome://extensions` (version 3.0.1), then reload both
+its app tab and the Google Photos tab. Use **Scan / resume library**. This patch does
+not require a backend restart or catalog reset.
 
 ## GitHub CI
 

@@ -5,7 +5,7 @@ import {readFileSync} from 'node:fs';
 const account='test@example.invalid';
 let calls;
 beforeEach(() => {
-  globalThis.window={WIZ_global_data:{oPEP7c:account, SNlM0e:'fake-csrf',FdrFJe:'session',cfb2h:'build'}};
+  globalThis.window={WIZ_global_data:{oPEP7c:account, SNlM0e:'fake-csrf',FdrFJe:'session',cfb2h:'build',eptZe:'/_/PhotosUi/'}};
   globalThis.location={pathname:'/u/1/photos',href:'https://photos.google.com/u/1/photos'};
   calls=[];
   globalThis.fetch=async (url, opts) => {
@@ -33,8 +33,36 @@ test('explicit live trash and restore use only pinned reversible RPC shapes',asy
     const wrapper=JSON.parse(call.opts.body.get('f.req'));
     assert.equal(wrapper[0][0][0],'XwAOJf');
     assert.deepEqual(JSON.parse(wrapper[0][0][1]),payload);
-    assert.match(call.url,/\/u\/1\/data\/batchexecute/);
+    assert.equal(new URL(call.url).pathname,'/_/PhotosUi/data/batchexecute');
   }
+});
+test('scan uses the Google-supplied service root for default and multi-account pages',async()=>{
+  for (const path of ['/_/PhotosUi/', '/u/1/_/PhotosUi/']) {
+    window.WIZ_global_data.eptZe=path;
+    const r=await pageCommand('scanPage',{expectedAccount:account});
+    assert.equal(r.ok,true,r.error);
+    const url=new URL(calls.at(-1).url);
+    assert.equal(url.origin,'https://photos.google.com');
+    assert.equal(url.pathname,path+'data/batchexecute');
+    assert.equal(url.searchParams.get('source-path'),'/u/1/photos');
+  }
+});
+test('missing or unsafe service roots fail before sending credentials',async()=>{
+  for(const path of [undefined,'/u/1/','https://evil.invalid/','//evil.invalid/','/_/PhotosUi/../','/_/PhotosUi/?secret=']) {
+    window.WIZ_global_data.eptZe=path;
+    const r=await pageCommand('scanPage',{expectedAccount:account});
+    assert.equal(r.ok,false);
+    assert.match(r.error,/API path unavailable or changed/);
+  }
+  assert.equal(calls.length,0);
+});
+test('HTTP failures name the failing RPC and endpoint without leaking credentials',async()=>{
+  globalThis.fetch=async()=>({ok:false,status:405});
+  const r=await pageCommand('scanPage',{expectedAccount:account});
+  assert.equal(r.ok,false);
+  assert.match(r.error,/HTTP 405 \(lcxiM at \/_\/PhotosUi\/data\/batchexecute\)/);
+  assert.ok(!r.error.includes('fake-csrf'));
+  assert.ok(!r.error.includes(account));
 });
 test('account changes, unsupported commands, and oversized batches send no RPC',async()=>{
   for(const [name,args] of [

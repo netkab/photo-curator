@@ -19,14 +19,18 @@ export async function pageCommand(command, args = {}) {
     async function rpc(id, payload) {
       const params = new URLSearchParams({rpcids: id, "source-path": location.pathname,
         "f.sid": wiz.FdrFJe, bl: wiz.cfb2h, pageId: "none", rt: "c"});
-      const path = `/u/${pathAccount}/`;
+      // Google supplies the RPC service root; the visible /u/N/photos route is not it.
+      // Keep the host fixed and accept only PhotosUi roots before sending the CSRF token.
+      const path = wiz.eptZe;
+      if (typeof path !== "string" || !/^\/(?:u\/\d+\/)?_\/PhotosUi\/$/.test(path))
+        throw new Error("Google Photos API path unavailable or changed; reload the Photos tab and retry");
       const response = await fetch(`https://photos.google.com${path}data/batchexecute?${params}`, {
         method: "POST", credentials: "include", signal: AbortSignal.timeout(60000),
         headers: {"Content-Type": "application/x-www-form-urlencoded;charset=UTF-8"},
         body: new URLSearchParams({"f.req": JSON.stringify([[[id, JSON.stringify(payload), null, "generic"]]]),
                                   at: wiz.SNlM0e}),
       });
-      if (!response.ok) throw new Error(`Google Photos HTTP ${response.status}; stop and retry later`);
+      if (!response.ok) throw new Error(`Google Photos HTTP ${response.status} (${id} at ${path}data/batchexecute); reload the Photos tab and retry`);
       const lines = (await response.text()).split("\n");
       for (const line of lines) {
         if (!line.includes('"wrb.fr"')) continue;

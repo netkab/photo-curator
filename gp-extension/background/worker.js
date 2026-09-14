@@ -48,7 +48,11 @@ async function scan({restart = false} = {}) {
       // Only read operations are retried automatically. Mutation failures require explicit resume.
       for (let attempt = 0; attempt < 3; attempt++) {
         try { page = await callPage(tab.id, "scanPage", {pageId, expectedAccount: h.account}); break; }
-        catch (e) { if (attempt === 2) throw e; await sleep(2000 * (attempt + 1)); }
+        catch (e) {
+          if (attempt === 2) throw e;
+          broadcast({type: "scan:retry", attempt: attempt + 2, error: e.message});
+          await sleep(2000 * (attempt + 1));
+        }
       }
       if (page.nextPageId && page.nextPageId === pageId) throw new Error("Google returned a repeated cursor");
       const saved = await api.post("/api/gp/sync", {account: h.account, items: page.items,

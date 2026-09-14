@@ -1,6 +1,7 @@
 import {h, render, fmtInt} from "../../lib/dom.js";
 export async function syncTab(root, ctx) {
   const {api, send, toast, onWorkerEvent} = ctx;
+  const scanStatus = h("p", {role: "status", "aria-live": "polite"});
   const status = h("p", {role: "status", "aria-live": "polite"});
   const summary = h("p");
   let analysisId = null;
@@ -10,7 +11,8 @@ export async function syncTab(root, ctx) {
   const stop = h("button", {onclick: async () => {
     await send({type: "PC_SCAN_CANCEL"});
     if (analysisId) await api.post(`/api/jobs/${analysisId}/cancel`);
-    status.textContent = "Stopping after the current page or thumbnail. Saved progress is retained.";
+    const target = analysisId ? status : scanStatus;
+    target.textContent = "Stopping after the current page or thumbnail. Saved progress is retained.";
   }}, "Stop");
   const clip = h("input", {type: "checkbox"});
   const analyze = h("button.primary", {onclick: runAnalysis}, "Fetch thumbnails and find duplicates");
@@ -23,12 +25,15 @@ export async function syncTab(root, ctx) {
     } catch (e) {summary.textContent = e.message;}
   }
   async function start(fromNewest) {
-    busy(true); status.textContent = "Reading Google Photos metadata…";
+    busy(true); scanStatus.textContent = "Reading Google Photos metadata…";
     try {
       const result = await send({type: "PC_SCAN", args: {restart: fromNewest}});
       if (!result?.ok) throw new Error(result?.error || "Scan failed");
-      status.textContent = `${result.cancelled ? "Stopped" : "Scan complete"}: ${fmtInt(result.total)} items saved. Next, fetch thumbnails.`;
-    } catch (e) {status.textContent = e.message + " Saved pages remain; resume or rescan to retry.";}
+      scanStatus.textContent = `${result.cancelled ? "Stopped" : "Scan complete"}: ${fmtInt(result.total)} items saved. Next, fetch thumbnails.`;
+    } catch (e) {
+      scanStatus.textContent = e.message + " Saved pages remain; resume or rescan to retry.";
+      toast(e.message, "err");
+    }
     finally {busy(false); await refresh();}
   }
   async function runAnalysis() {
@@ -53,12 +58,13 @@ export async function syncTab(root, ctx) {
     finally {analysisId = null; busy(false); await refresh();}
   }
   const off = onWorkerEvent(msg => {
-    if (msg.type === "scan:page") status.textContent = `Saved page ${msg.pages}: ${fmtInt(msg.total)} items.`;
-    if (msg.type === "scan:error") status.textContent = msg.error;
+    if (msg.type === "scan:page") scanStatus.textContent = `Saved page ${msg.pages}: ${fmtInt(msg.total)} items.`;
+    if (msg.type === "scan:retry") scanStatus.textContent = `Read failed; retrying (${msg.attempt}/3). ${msg.error}`;
+    if (msg.type === "scan:error") scanStatus.textContent = msg.error;
   });
   render(root, h("div.card", h("h2", "Scan your Google Photos library"),
     h("p.sub", "Keep one signed-in Google Photos tab open. Metadata is saved page by page; you can stop and resume. No Takeout export is needed."),
-    h("div.row", scan, restart, stop), summary),
+    h("div.row", scan, restart, stop), scanStatus, summary),
     h("div.card", h("h2", "Find similar photos locally"),
     h("p.sub", "Downloads 512-pixel previews, then compares them on this computer. Videos are cataloged but excluded. Thumbnail matches are suggestions: check originals before trashing."),
     h("label.check", clip, "Also use local CLIP embeddings (requires the optional model setup)"),
