@@ -184,12 +184,16 @@ def test_cancelled_inflight_results_recorded_without_restart(client):
 
 @pytest.mark.parametrize("url", ["http://lh3.googleusercontent.com/x", "https://evil.invalid/x",
     "https://lh3.googleusercontent.com.evil.invalid/x", "https://localhost/x",
-    "https://127.0.0.1/x", "https://user@lh3.googleusercontent.com/x", "https://lh3.googleusercontent.com:99/x"])
+    "https://127.0.0.1/x", "https://user@lh3.googleusercontent.com/x", "https://lh3.googleusercontent.com:99/x",
+    "https://photos.fife.usercontent.google.com.evil.invalid/x", "https://evil.usercontent.google.com/x",
+    "http://photos.fife.usercontent.google.com/x", "https://photos.fife.usercontent.google.com:99/x",
+    "https://user@photos.fife.usercontent.google.com/x"])
 def test_thumbnail_url_allowlist(url):
     with pytest.raises(ValueError): direct.thumbnail_url(url)
 
 def test_thumbnail_normalization():
     assert direct.thumbnail_url("https://lh3.googleusercontent.com/a=w2000?secret=x") == "https://lh3.googleusercontent.com/a=w512-h512-no"
+    assert direct.thumbnail_url("https://photos.fife.usercontent.google.com/a=w2000?secret=x") == "https://photos.fife.usercontent.google.com/a=w512-h512-no"
 
 class Handle:
     cancelled=False
@@ -212,6 +216,7 @@ def test_thumbnail_analysis_resume_and_review_persistence(client, monkeypatch):
         assert all(m.thumbnail_sha256 != m.sha256 for m in s.query(Media))
     again=direct.analyze(Handle())
     assert again["cached"] == 0 and len(calls) == 3 and again["groups"] == 0
+    assert again["already_cached"] == 3
     with session_scope() as s: assert s.query(DupGroup).count() == 1
 
 def test_low_information_and_bad_images():
@@ -225,7 +230,8 @@ def test_videos_excluded_and_failed_thumbs_retry(client, monkeypatch):
     with session_scope() as s:
         s.query(Media).first().media_type="video"
     monkeypatch.setattr(direct,"fetch_thumbnail",lambda _: (_ for _ in ()).throw(ValueError("expired")))
-    assert direct.analyze(Handle())["failed"] == 2
+    with pytest.raises(ValueError, match="No photos could be analyzed: 2 thumbnail downloads failed.*expired"):
+        direct.analyze(Handle())
     monkeypatch.setattr(direct,"fetch_thumbnail",lambda _:photo())
     assert direct.analyze(Handle())["cached"] == 2
 
@@ -283,3 +289,37 @@ def test_redirects_and_oversize_downloads_rejected(monkeypatch):
     with pytest.raises(ValueError,match='HTTP 302'): direct.fetch_thumbnail('https://lh3.googleusercontent.com/x')
     response.status_code=200
     with pytest.raises(ValueError,match='4 MB'): direct.fetch_thumbnail('https://lh3.googleusercontent.com/x')
+
+def test_browser_preview_queue_upload_and_cached_analysis(client, monkeypatch):
+    import base64
+    sync(client)
+    queue=client.get('/api/direct/thumbnail-queue?limit=2').json()['items']
+    assert len(queue)==2
+    first=queue[0]
+    body={'account':ACCOUNT,'data':base64.b64encode(photo()).decode()}
+    path=f"/api/direct/thumbnails/{first['media_id']}"
+    assert client.post(path,json={**body,'account':'another'}).status_code==409
+    assert client.post(path,json={**body,'data':'not base64'}).status_code==400
+    assert client.post(path,json={**body,'data':base64.b64encode(b'not an image').decode()}).status_code==400
+    assert client.post(path,json=body).json()['cached']
+    assert client.post(path,json=body).json()['cached'] is False
+    remaining=client.get('/api/direct/thumbnail-queue').json()['items']
+    assert len(remaining)==2 and all(i['media_id']!=first['media_id'] for i in remaining)
+    for item in remaining:
+        assert client.post(f"/api/direct/thumbnails/{item['media_id']}",json=body).status_code==200
+    assert client.get('/api/direct/thumbnail-queue').json()['items']==[]
+    monkeypatch.setattr(direct,'fetch_thumbnail',lambda _: pytest.fail('Cached analysis must not fetch URLs'))
+    result=direct.analyze(Handle(),cached_only=True)
+    assert result['already_cached']==3 and result['groups']==1
+    client.headers.pop('Authorization')
+    assert client.get('/api/direct/thumbnail-queue').status_code==401
+    assert client.post(path,json=body).status_code==401
+
+def test_all_failed_downloads_preserve_previous_groups(client,monkeypatch):
+    gid,ids=group(client)
+    monkeypatch.setattr(direct,'fetch_thumbnail',lambda _: (_ for _ in ()).throw(ValueError('Thumbnail HTTP 403')))
+    with pytest.raises(ValueError,match='No photos could be analyzed'):
+        direct.analyze(Handle())
+    with session_scope() as s:
+        assert s.get(DupGroup,gid) is not None
+        assert s.query(DupMember).count()==3

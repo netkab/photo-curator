@@ -109,3 +109,34 @@ test('extension has no generic page message bridge or external connections',()=>
   assert.ok(!worker.includes('PC_GP_CALL'));
   assert.ok(!worker.includes('window.postMessage'));
 });
+
+test('browser thumbnail reads use signed-in session and fixed preview size without backend secrets',async()=>{
+  globalThis.fetch=async(url,opts)=>{
+    calls.push({url,opts});
+    return new Response(new Uint8Array([1,2,3]),{headers:{'Content-Type':'image/jpeg'}});
+  };
+  const r=await pageCommand('fetchThumbnail',{expectedAccount:account,url:'https://photos.fife.usercontent.google.com/pw/fake=w4000?unsafe=1'});
+  assert.equal(r.ok,true,r.error);
+  assert.equal(r.result.data,'AQID');
+  assert.equal(calls[0].url,'https://photos.fife.usercontent.google.com/pw/fake=w512-h512-no?authuser=1');
+  assert.equal(calls[0].opts.credentials,'include');
+  assert.equal(calls[0].opts.redirect,'error');
+  assert.equal(calls[0].opts.headers,undefined);
+});
+test('browser thumbnail reads reject unsafe hosts, account changes, oversized and nonimage responses',async()=>{
+  for(const url of ['https://evil.invalid/x','https://photos.fife.usercontent.google.com.evil.invalid/x','http://photos.fife.usercontent.google.com/x','https://user@photos.fife.usercontent.google.com/x'])
+    assert.equal((await pageCommand('fetchThumbnail',{expectedAccount:account,url})).ok,false);
+  assert.equal(calls.length,0);
+  const args={expectedAccount:account,url:'https://photos.fife.usercontent.google.com/pw/fake'};
+  globalThis.fetch=async()=>new Response('signed out',{status:403});
+  assert.match((await pageCommand('fetchThumbnail',args)).error,/HTTP 403/);
+  globalThis.fetch=async()=>new Response('<html>',{headers:{'Content-Type':'text/html'}});
+  assert.match((await pageCommand('fetchThumbnail',args)).error,/not an image/);
+  globalThis.fetch=async()=>new Response(new Uint8Array(4*1024*1024+1),{headers:{'Content-Type':'image/jpeg'}});
+  assert.match((await pageCommand('fetchThumbnail',args)).error,/4 MB/);
+  globalThis.fetch=async()=>{
+    window.WIZ_global_data.oPEP7c='another';
+    return new Response(new Uint8Array([1]),{headers:{'Content-Type':'image/jpeg'}});
+  };
+  assert.match((await pageCommand('fetchThumbnail',args)).error,/account changed/);
+});

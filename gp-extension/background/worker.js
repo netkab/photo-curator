@@ -98,6 +98,37 @@ async function runOperation(id) {
     return {ok: true, op: final};
   } finally {runningOp = null;}
 }
+async function fetchThumbnails() {
+  if (scanning || runningOp) throw new Error("Wait for the current scan or operation to finish");
+  scanning = true; cancelScan = false;
+  let after = 0, cached = 0, failed = 0, consecutiveFailures = 0;
+  try {
+    const tab = await photosTab();
+    const h = await callPage(tab.id, "healthCheck");
+    if (!h.authed) throw new Error("Sign in to Google Photos and reload the tab");
+    for (;;) {
+      const {items} = await api.get(`/api/direct/thumbnail-queue?after=${after}&limit=50`);
+      if (!items.length) return {ok: true, cached, failed};
+      for (const item of items) {
+        if (cancelScan) return {ok: true, cancelled: true, cached, failed};
+        if (item.account !== h.account) throw new Error("Google account does not match the catalog");
+        let preview;
+        try {
+          preview = await callPage(tab.id, "fetchThumbnail", {url: item.url, expectedAccount: h.account});
+        } catch (e) {
+          failed++; consecutiveFailures++;
+          broadcast({type: "thumbnail:progress", cached, failed, error: e.message});
+          if (consecutiveFailures >= 5) throw new Error(`Thumbnail downloads stopped after 5 consecutive failures: ${e.message}`);
+          after = item.media_id;
+          continue;
+        }
+        await api.post(`/api/direct/thumbnails/${item.media_id}`, {account: item.account, data: preview.data});
+        cached++; consecutiveFailures = 0; after = item.media_id;
+        broadcast({type: "thumbnail:progress", cached, failed});
+      }
+    }
+  } finally {scanning = false;}
+}
 async function getImage(url) {
   const blob = await api.localImage(url);
   const bytes = new Uint8Array(await blob.arrayBuffer());
@@ -106,14 +137,14 @@ async function getImage(url) {
   return {ok: true, dataUrl: `data:${blob.type};base64,${btoa(text)}`};
 }
 const routes = {
-  PC_HEALTH: () => health(), PC_SCAN: m => scan(m.args),
+  PC_HEALTH: () => health(), PC_SCAN: m => scan(m.args), PC_FETCH_THUMBNAILS: () => fetchThumbnails(),
   PC_SCAN_CANCEL: () => {cancelScan = true; return {ok: true};},
   PC_RUN_OP: m => runOperation(m.opId), GET_IMAGE: m => getImage(m.url),
 };
 chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   if (!trusted(sender) || !routes[msg?.type]) return false;
   Promise.resolve().then(() => routes[msg.type](msg)).then(reply).catch(error => {
-    broadcast({type: msg.type === "PC_SCAN" ? "scan:error" : "op:error", error: error.message});
+    broadcast({type: msg.type === "PC_SCAN" ? "scan:error" : msg.type === "PC_FETCH_THUMBNAILS" ? "thumbnail:error" : "op:error", error: error.message});
     reply({ok: false, error: error.message});
   });
   return true;

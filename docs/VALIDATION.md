@@ -4,8 +4,8 @@ Tested locally on macOS ARM64 with Python 3.12 and Node 26.3.0.
 
 | Check | Result |
 |---|---|
-| Backend regression suite | 30 passed |
-| Extension RPC/manifest regression suite | 10 passed |
+| Backend regression suite | 37 passed |
+| Extension RPC/manifest regression suite | 12 passed |
 | TypeScript and Vite production build | Passed |
 | Installed Python dependency compatibility (`pip check`) | Passed |
 | Updated frontend dependency audit | 0 reported vulnerabilities |
@@ -51,6 +51,14 @@ its app tab and the Google Photos tab. Use **Scan / resume library**. This patch
 not require a backend restart or catalog reset.
 
 ## GitHub CI
+
+Thumbnail download follow-up (3.0.2): a real catalog contained 18,679 photos and 706 videos.
+Every photo used the newer `photos.fife.usercontent.google.com` host. The old allowlist rejected
+it; three bounded, unauthenticated download probes then returned HTTP 403. The extension now
+fetches previews through the signed-in Photos tab and sends only bounded image bytes to the
+authenticated local cache endpoint. Tests cover host restrictions, browser credentials, no
+redirects, account changes, oversized responses, authenticated uploads, resumable cache reuse,
+and retaining previous groups when every download fails. All 37 backend and 12 extension tests pass.
 
 `.ci/cleanup.yml` is a ready-to-use GitHub Actions template for the backend tests, extension tests,
 frontend build and npm audit. It is not active. Creation at `.github/workflows/cleanup.yml` was rejected

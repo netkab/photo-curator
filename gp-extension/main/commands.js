@@ -16,6 +16,38 @@ export async function pageCommand(command, args = {}) {
     if (!args.expectedAccount || args.expectedAccount !== account)
       throw new Error("Google account changed; stop and rescan the correct account");
 
+    if (command === "fetchThumbnail") {
+      const url = new URL(args.url);
+      if (url.protocol !== "https:" || url.username || url.password || url.port ||
+          !(url.hostname === "photos.fife.usercontent.google.com" || /^lh[0-9]+\.googleusercontent\.com$/.test(url.hostname)))
+        throw new Error("Thumbnail host is not an allowed Google image host");
+      url.pathname = url.pathname.split("=")[0] + "=w512-h512-no";
+      url.search = new URLSearchParams({authuser: pathAccount}).toString();
+      url.hash = "";
+      const response = await fetch(url.href, {credentials: "include", redirect: "error",
+                                             signal: AbortSignal.timeout(30000)});
+      if (!response.ok) throw new Error(`Google thumbnail HTTP ${response.status}; reload Photos or rescan to refresh previews`);
+      if (!response.headers.get("Content-Type")?.toLowerCase().startsWith("image/"))
+        throw new Error("Google thumbnail response is not an image");
+      const reader = response.body.getReader();
+      const chunks = [];
+      let length = 0;
+      for (;;) {
+        const {done, value} = await reader.read();
+        if (done) break;
+        length += value.length;
+        if (length > 4 * 1024 * 1024) {await reader.cancel(); throw new Error("Thumbnail exceeds 4 MB");}
+        chunks.push(value);
+      }
+      if (window.WIZ_global_data?.oPEP7c !== args.expectedAccount)
+        throw new Error("Google account changed during thumbnail download");
+      let binary = "";
+      for (const chunk of chunks)
+        for (let offset = 0; offset < chunk.length; offset += 8192)
+          binary += String.fromCharCode(...chunk.subarray(offset, offset + 8192));
+      return {ok: true, result: {data: btoa(binary)}};
+    }
+
     async function rpc(id, payload) {
       const params = new URLSearchParams({rpcids: id, "source-path": location.pathname,
         "f.sid": wiz.FdrFJe, bl: wiz.cfb2h, pageId: "none", rt: "c"});

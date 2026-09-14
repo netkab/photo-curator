@@ -21,7 +21,9 @@ MAX_PIXELS = 4096 * 4096
 
 def thumbnail_url(raw: str) -> str:
     u = urlsplit(raw)
-    if (u.scheme != "https" or not re.fullmatch(r"lh[0-9]+\.googleusercontent\.com", u.hostname or "")
+    allowed_host = (u.hostname == "photos.fife.usercontent.google.com"
+                    or re.fullmatch(r"lh[0-9]+\.googleusercontent\.com", u.hostname or ""))
+    if (u.scheme != "https" or not allowed_host
             or u.username or u.password or u.port not in (None, 443) or not u.path.startswith("/")):
         raise ValueError("Thumbnail host is not an allowed Google image host; rescan if Google changed its URLs")
     # Replace image transforms; never request an original or forward arbitrary query arguments.
@@ -78,11 +80,22 @@ def catalog_item(s, row: GpItem):
     s.flush()
     row.media_id, row.match_method, row.match_score = media.id, "direct", 1.0
 
-def analyze(handle, use_clip=False):
+def save_thumbnail(media, raw):
+    data, phash, sharp = image_features(raw)
+    name = f"gp-{media.sha256}.jpg"
+    dest = settings.thumbs_dir / name
+    temp = dest.with_suffix(".tmp")
+    temp.write_bytes(data)
+    temp.replace(dest)
+    media.thumb_path, media.phash, media.blur_score = name, phash, sharp
+    media.thumbnail_sha256 = hashlib.sha256(data).hexdigest()
+    media.analyzed_at = datetime.utcnow()
+
+def analyze(handle, use_clip=False, cached_only=False):
     # Cache one image at a time; each commit survives a stop/restart. No original downloads.
     with session_scope() as s:
         ids = [g.id for g in s.query(GpItem).filter(GpItem.trashed.is_(False)).all()]
-    cached = skipped = 0
+    cached = skipped = already_cached = 0
     errors = []
     for index, gid in enumerate(ids):
         if handle.cancelled:
@@ -95,27 +108,26 @@ def analyze(handle, use_clip=False):
                 continue
             if m.thumb_path and (settings.thumbs_dir / m.thumb_path).is_file():
                 skipped += 1
+                already_cached += 1
                 continue
             try:
-                data, phash, sharp = image_features(fetch_thumbnail(g.thumb_url or ""))
-                name = f"gp-{m.sha256}.jpg"
-                dest = settings.thumbs_dir / name
-                temp = dest.with_suffix(".tmp")
-                temp.write_bytes(data)
-                temp.replace(dest)
-                m.thumb_path, m.phash, m.blur_score = name, phash, sharp
-                m.thumbnail_sha256 = hashlib.sha256(data).hexdigest()
-                m.analyzed_at = datetime.utcnow()
+                if cached_only:
+                    raise ValueError("Preview not cached; retry Fetch thumbnails in the extension")
+                save_thumbnail(m, fetch_thumbnail(g.thumb_url or ""))
                 cached += 1
             except Exception as exc:
                 # Do not expose signed thumbnail URLs in logs or API errors.
                 errors.append({"media_id": m.id, "error": str(exc) if isinstance(exc, ValueError)
                                else type(exc).__name__ + ": thumbnail unavailable; rescan and retry"})
         handle.update(0.65 * (index + 1) / max(1, len(ids)), f"Cached {cached}; {len(errors)} unavailable")
+    if errors and cached + already_cached == 0:
+        raise ValueError(f"No photos could be analyzed: {len(errors)} thumbnail downloads failed. "
+                         f"First error: {errors[0]['error']}. Saved catalog and previous groups are retained.")
     if use_clip:
         embed(handle)
     groups = cluster(handle, use_clip)
-    return {"cached": cached, "skipped": skipped, "failed": len(errors), "errors": errors[:50],
+    return {"cached": cached, "already_cached": already_cached,
+            "skipped": skipped, "failed": len(errors), "errors": errors[:50],
             "groups": groups, "evidence": "thumbnails only; original equality is unknown"}
 
 def embed(handle):

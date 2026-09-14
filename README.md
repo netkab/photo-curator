@@ -73,9 +73,11 @@ ports and never kills existing Python/Node processes.
 1. **Library Sync → Scan / resume library.** The extension reads library + archived-item metadata
    in pages of up to 500 and saves a durable cursor with each page. Stop at any time. Resume continues
    from the last committed page. **Rescan from newest** restarts enumeration without erasing the catalog.
-2. **Fetch thumbnails and find duplicates.** Downloads up to 512-pixel previews into the local cache,
-   never original photos or videos. Cached items are skipped on later runs. Failed downloads are counted;
-   rescan to refresh expired URLs, then retry analysis. Stop is cooperative after the current request.
+2. **Fetch thumbnails and find duplicates.** Keep the signed-in Photos tab open: the extension
+   downloads up to 512-pixel previews through that tab and passes image bytes to the local backend,
+   never original photos or videos. Google cookies stay in Chrome. Cached items are skipped on later
+   runs. Five consecutive download failures stop the attempt with the actual error; partial progress
+   is saved. Stop is cooperative after the current request. Rescan only to refresh expired URLs.
 3. **Duplicates.** Compare each proposed group and keeper, open originals in Google Photos when useful,
    pick another keeper, or mark additional photos **Keep too**. Dismiss unrelated groups. Each new
    group has a suggested keeper based on reported original dimensions, then thumbnail sharpness.
@@ -125,9 +127,12 @@ real trash/restore runs. This is not a backup service.
   immediately before a real run. Google changes or expiring cursors may require a fresh scan.
 - Cached previews, filenames, account identity and optional embeddings stay on disk unencrypted.
   Preview URLs can grant access to private images: do not share the catalog, logs or data directory.
-  Downloads go only to allowlisted `lh<number>.googleusercontent.com` hosts over HTTPS, with no
-  redirects, environment proxies, Google cookies, or third-party uploads. URL expiry/auth requirements
-  can prevent downloading some images; they remain cataloged for manual inspection.
+  Downloads go only to allowlisted `lh<number>.googleusercontent.com` and
+  `photos.fife.usercontent.google.com` hosts over HTTPS, without redirects. The extension downloads
+  in the Google Photos page using its existing browser session; Google cookies are never copied to
+  the backend, and the local pairing token never enters the Google page. The backend's optional
+  direct downloader uses no cookies or environment proxies and cannot fetch session-protected images.
+  URL expiry or Google API/CORS changes can prevent downloads; they remain cataloged for retry.
 
 ### Optional local CLIP embeddings
 
