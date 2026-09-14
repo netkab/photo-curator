@@ -323,3 +323,18 @@ def test_all_failed_downloads_preserve_previous_groups(client,monkeypatch):
     with session_scope() as s:
         assert s.get(DupGroup,gid) is not None
         assert s.query(DupMember).count()==3
+
+def test_animated_browser_previews_are_excluded_without_stopping_downloads(client):
+    import base64
+    sync(client)
+    item=client.get('/api/direct/thumbnail-queue').json()['items'][0]
+    out=io.BytesIO()
+    Image.new('RGB',(20,20),'red').save(out,format='GIF',save_all=True,
+        append_images=[Image.new('RGB',(20,20),'blue')],duration=100,loop=0)
+    response=client.post(f"/api/direct/thumbnails/{item['media_id']}",json={
+        'account':ACCOUNT,'data':base64.b64encode(out.getvalue()).decode()})
+    assert response.status_code==200 and response.json()['skipped']
+    assert all(i['media_id']!=item['media_id'] for i in client.get('/api/direct/thumbnail-queue').json()['items'])
+    with session_scope() as s:
+        m=s.get(Media,item['media_id'])
+        assert m.media_type=='animation' and m.phash is None

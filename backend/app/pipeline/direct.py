@@ -19,6 +19,9 @@ from ..models import Media, GpItem, DupGroup, DupMember
 MAX_BYTES = 4 * 1024 * 1024
 MAX_PIXELS = 4096 * 4096
 
+class AnimatedPreviewError(ValueError):
+    pass
+
 def thumbnail_url(raw: str) -> str:
     u = urlsplit(raw)
     allowed_host = (u.hostname == "photos.fife.usercontent.google.com"
@@ -55,7 +58,7 @@ def image_features(data: bytes):
         if im.width * im.height > MAX_PIXELS:
             raise ValueError("Thumbnail pixel dimensions are too large")
         if getattr(im, "n_frames", 1) != 1:
-            raise ValueError("Animated images require manual review")
+            raise AnimatedPreviewError("Animated images require manual review")
         im = ImageOps.exif_transpose(im).convert("RGB")
         im.thumbnail((512, 512))
         gray = np.asarray(im.convert("L"), dtype=np.float32)

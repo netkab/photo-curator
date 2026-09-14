@@ -54,6 +54,9 @@ def cache_preview(media_id: int, body: PreviewBody):
         try:
             raw = base64.b64decode(body.data, validate=True)
             direct.save_thumbnail(m, raw)
+        except direct.AnimatedPreviewError:
+            m.media_type = "animation"
+            return {"cached": False, "skipped": "animated preview requires manual review"}
         except (ValueError, binascii.Error) as exc:
             raise HTTPException(400, f"Invalid preview: {exc}") from None
         except OSError as exc:

@@ -101,14 +101,14 @@ async function runOperation(id) {
 async function fetchThumbnails() {
   if (scanning || runningOp) throw new Error("Wait for the current scan or operation to finish");
   scanning = true; cancelScan = false;
-  let after = 0, cached = 0, failed = 0, consecutiveFailures = 0;
+  let after = 0, cached = 0, failed = 0, skipped = 0, consecutiveFailures = 0;
   try {
     const tab = await photosTab();
     const h = await callPage(tab.id, "healthCheck");
     if (!h.authed) throw new Error("Sign in to Google Photos and reload the tab");
     for (;;) {
       const {items} = await api.get(`/api/direct/thumbnail-queue?after=${after}&limit=50`);
-      if (!items.length) return {ok: true, cached, failed};
+      if (!items.length) return {ok: true, cached, failed, skipped};
       for (const item of items) {
         if (cancelScan) return {ok: true, cancelled: true, cached, failed};
         if (item.account !== h.account) throw new Error("Google account does not match the catalog");
@@ -122,9 +122,10 @@ async function fetchThumbnails() {
           after = item.media_id;
           continue;
         }
-        await api.post(`/api/direct/thumbnails/${item.media_id}`, {account: item.account, data: preview.data});
-        cached++; consecutiveFailures = 0; after = item.media_id;
-        broadcast({type: "thumbnail:progress", cached, failed});
+        const saved = await api.post(`/api/direct/thumbnails/${item.media_id}`, {account: item.account, data: preview.data});
+        if (saved.skipped) skipped++; else cached++;
+        consecutiveFailures = 0; after = item.media_id;
+        broadcast({type: "thumbnail:progress", cached, failed, skipped});
       }
     }
   } finally {scanning = false;}

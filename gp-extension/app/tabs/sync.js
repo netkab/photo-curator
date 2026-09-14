@@ -70,7 +70,7 @@ export async function syncTab(root, ctx) {
     if (msg.type === "scan:page") scanStatus.textContent = `Saved page ${msg.pages}: ${fmtInt(msg.total)} items.`;
     if (msg.type === "scan:retry") scanStatus.textContent = `Read failed; retrying (${msg.attempt}/3). ${msg.error}`;
     if (msg.type === "scan:error") scanStatus.textContent = msg.error;
-    if (msg.type === "thumbnail:progress") status.textContent = `Downloaded ${fmtInt(msg.cached)} previews; ${fmtInt(msg.failed)} unavailable.` + (msg.error ? ` ${msg.error}` : "");
+    if (msg.type === "thumbnail:progress") status.textContent = `Downloaded ${fmtInt(msg.cached)} previews; ${fmtInt(msg.skipped)} animations skipped; ${fmtInt(msg.failed)} unavailable.` + (msg.error ? ` ${msg.error}` : "");
     if (msg.type === "thumbnail:error") status.textContent = msg.error;
   });
   render(root, h("div.card", h("h2", "Scan your Google Photos library"),
