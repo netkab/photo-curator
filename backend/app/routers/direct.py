@@ -54,6 +54,8 @@ def cache_preview(media_id: int, body: PreviewBody):
         try:
             raw = base64.b64decode(body.data, validate=True)
             direct.save_thumbnail(m, raw)
-        except (ValueError, binascii.Error, OSError):
-            raise HTTPException(400, "Invalid or oversized preview image") from None
+        except (ValueError, binascii.Error) as exc:
+            raise HTTPException(400, f"Invalid preview: {exc}") from None
+        except OSError as exc:
+            raise HTTPException(400, f"Preview could not be decoded or saved ({type(exc).__name__})") from None
         return {"cached": True}
