@@ -57,6 +57,7 @@ def ignore(gid: int, db: Session = Depends(db_dependency)):
     return {'status': 'ignored'}
 
 class Selection(BaseModel):
+    preview: bool = False
     media_ids: list[int] = Field(min_length=1, max_length=25)
 
 @router.post('/{gid}/review')
@@ -86,7 +87,10 @@ def review(gid: int, body: Selection, db: Session = Depends(db_dependency)):
     a = ReviewAction(kind='delete', payload=json.dumps({'reason': 'Possible accidental burst — selected by you',
         'accident_group_id': gid, 'kept_media_ids': sorted(kept),
         'items': [{'media_id': mid} for mid in sorted(selected)]}))
-    reviewed_targets(db, a)  # Validate now; approval and execution validate again.
+    account, keys, protected = reviewed_targets(db, a)
+    if body.preview:
+        return {'account': account, 'keys': keys, 'protected_keys': protected}
+    # Approval and execution validate again.
     db.add(a)
     g.status = 'reviewed'
     db.commit()

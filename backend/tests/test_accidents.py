@@ -94,3 +94,15 @@ def test_broad_includes_borderline_previews_and_sparse_bursts(tmp_path, client):
     assert not find_bursts(rows, 'conservative')
     assert len(find_bursts(rows, 'broad'))==1
     assert client.post('/api/accidents/analyze',json={'sensitivity':'invalid'}).status_code==422
+
+def test_preview_leaves_group_pending_and_creates_no_review(client):
+    ids=seed();analyze(Handle())
+    gid=client.get('/api/accidents').json()['groups'][0]['id']
+    r=client.post(f'/api/accidents/{gid}/review',json={'media_ids':[ids[0]],'preview':True})
+    assert r.status_code==200,r.text
+    assert r.json()['keys']==['k0']
+    assert set(r.json()['protected_keys'])=={'k1','k2','k3'}
+    with session_scope() as s:
+        assert s.query(ReviewAction).count()==0
+        assert s.query(GpOperation).count()==0
+    assert client.get('/api/accidents').json()['groups'][0]['id']==gid

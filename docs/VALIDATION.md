@@ -116,3 +116,7 @@ copy this template to `.github/workflows/cleanup.yml` and push it to activate CI
 - Installed backend processed 10,423 owned photos from the existing catalog in approximately 14 seconds: one pending suggestion, two unavailable previews and two missing dates. This verifies execution, not classification accuracy. No selection, approval or live trash was performed by this validation.
 - Uses cached thumbnails only; no new model downloads or external image uploads. Thresholds are conservative heuristics and have not been calibrated against a labeled personal-photo dataset.
 - Native Chrome visual inspection/reload was interrupted by concurrent user activity. Visual layout and manual browser interaction for the new tab remain unverified. The mechanical UI detector reported only the existing progress-bar width transition, outside the new surface.
+
+## 3.1.2 — direct trash from accidental bursts
+
+49 backend tests and 19 extension tests pass. New coverage checks dry-run selection validation without consuming groups or creating reviews, cancellation before any write, unavailable Google Photos before any write, and the confirmed review/approve/live-apply sequence. JavaScript syntax checks and UI detector pass. No actual photo trash or restore was executed as a test. Native UI visual verification remains outstanding.

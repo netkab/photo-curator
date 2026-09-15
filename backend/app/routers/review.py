@@ -148,7 +148,7 @@ def apply(action_id: int, body: ApplyBody | None = None, db: Session = Depends(d
     from .gp import CreateOpBody, create_operation
     op = create_operation(CreateOpBody(op="trash", account=payload.get("approved_account", ""),
                           keys=payload.get("approved_keys", []), review_action_id=a.id,
-                          dry_run=body.dry_run, note=f"Reviewed photos — action {a.id}"), db)
+                          dry_run=body.dry_run, note=f"{'Accident cleanup' if payload.get('accident_group_id') else 'Reviewed photos'} — action {a.id}"), db)
     return {"id": a.id, "status": a.status,
             "result": {"operation_id": op["id"], "mode": "extension", "dry_run": body.dry_run}}
 
