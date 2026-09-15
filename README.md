@@ -187,3 +187,11 @@ Their legacy source remains for reference. The old full GPTK userscript and page
 not loaded; a small adapter retains just the required request formats and licensing attribution.
 See [SECURITY.md](SECURITY.md) for the trust boundary and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
 for upstream credits. Existing legacy guides are historical and are not setup instructions for this fork.
+
+### Likely accidents (extension 3.1.0)
+
+After downloading previews in Library Sync, open **Likely accidents** and choose **Find likely accidents**. No CLIP model or Takeout is needed. This local pass considers only live photos marked as owned. It groups shots at most 12 seconds apart, capped at 90 seconds and 25 photos. A suggestion needs at least three dark, low-detail or possibly blurry previews making up 60% of the burst. Up to two neighboring photos on each side within five minutes provide context.
+
+Nothing is preselected. Inspect the original in Google Photos, select unwanted burst photos, then send the selection to the Review queue. Unselected burst photos and nearby context are protected; at least one surviving photo is required. Approval, dry run, live-trash opt-in and Undo use the existing review flow. **Keep this burst** persistently hides that burst, including overlapping suggestions on later runs. No automatic trash occurs.
+
+This is a conservative heuristic on reduced previews, not a judgment of original image quality: intentional night scenes, soft backgrounds, and abstract images can be flagged. Isolated blurry images and short bursts may be missed. Missing previews and timestamps are reported. Analysis can be stopped without replacing existing suggestions; restarting the backend requires starting the analysis again. Suggestions persist in the local catalog. Screenshots, temporary-photo classification, semantic similar scenes, and people detection are not part of this first release. Large-video cleanup remains in Google Photos.

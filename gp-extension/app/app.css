@@ -220,3 +220,14 @@ form button { justify-self: start; }
 .card p, .cap, code { overflow-wrap: anywhere; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 @media (max-width: 700px) { .topbar { flex-wrap: wrap; height: auto; padding: 12px; } }
+
+/* Accident review preserves framing and keeps explanations readable. */
+.accident-photo { width: 220px; max-width: 100%; }
+.accident-photo img { width: 100%; height: 180px; object-fit: contain; }
+.accident-photo p { margin: 8px 0; }
+.accident-photo .check { color: var(--text); margin-bottom: 8px; }
+.group > .sub { margin-top: 18px; }
+@media (max-width: 900px) {
+  .topbar { height: auto; flex-wrap: wrap; padding: 12px; gap: 12px; }
+  .tabs { flex-wrap: wrap; }
+}

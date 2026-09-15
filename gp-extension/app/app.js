@@ -13,10 +13,13 @@ import { setupTab } from "./tabs/setup.js";
 import { syncTab } from "./tabs/sync.js";
 import { dupesTab } from "./tabs/dupes.js";
 
+import { accidentsTab } from "./tabs/accidents.js";
+
 const TABS = [
   { id: "setup", label: "Setup", render: setupTab },
   { id: "sync", label: "Library Sync", render: syncTab },
   { id: "dupes", label: "Duplicates", render: dupesTab },
+  { id: "accidents", label: "Likely accidents", render: accidentsTab },
   { id: "review", label: "Review queue", render: reviewTab },
 ];
 

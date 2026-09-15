@@ -7,7 +7,7 @@ from fastapi.staticfiles import StaticFiles
 from .config import settings
 from .db import init_db
 from .jobs import manager
-from .routers import catalog, dedup, gp, review, direct
+from .routers import catalog, dedup, gp, review, direct, accidents
 from .security import LocalSecurityMiddleware, allowed_origins, local_token, router as auth_router
 
 @asynccontextmanager
@@ -44,6 +44,6 @@ def job(job_id: str):
 def cancel(job_id: str):
     return {"cancelled": manager.cancel(job_id)}
 
-for router in (auth_router, catalog.router, dedup.router, gp.router, review.router, direct.router):
+for router in (auth_router, catalog.router, dedup.router, gp.router, review.router, direct.router, accidents.router):
     app.include_router(router)
 app.mount("/media/thumbs", StaticFiles(directory=str(settings.thumbs_dir)), name="thumbs")

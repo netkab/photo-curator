@@ -295,3 +295,13 @@ class ScanCursor(Base):
     complete: Mapped[bool] = mapped_column(Boolean, default=False)
     pages: Mapped[int] = mapped_column(Integer, default=0)
     items: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class AccidentGroup(Base):
+    """Persistent local suggestions; ignored/reviewed bursts survive repeated analysis."""
+    __tablename__ = 'accident_groups'
+    __table_args__ = {'sqlite_autoincrement': True}
+    id: Mapped[int] = mapped_column(primary_key=True)
+    fingerprint: Mapped[str] = mapped_column(String(64), unique=True)
+    payload: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String, default='pending')

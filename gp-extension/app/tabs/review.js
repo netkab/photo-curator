@@ -6,7 +6,7 @@ export async function reviewTab(root, ctx) {
     if (busy) return;
     if (live) {
       if (!(await api.health()).live_trash_enabled) {toast("Live trash is disabled; see README setup.", "err"); return;}
-      if (!confirm(`Move the approved duplicates in review ${action.id} to Google Photos trash? Check the listed keepers first. Undo works only while Google retains the photos.`)) return;
+      if (!confirm(`Move the approved photos in review ${action.id} to Google Photos trash? Check the listed keepers first. Undo works only while Google retains the photos.`)) return;
     }
     busy = true;
     try {
@@ -44,7 +44,7 @@ export async function reviewTab(root, ctx) {
     }
     render(root, h("h2", "Review queue"),
       h("p.sub", "Approval records exactly which photos may be trashed. Queue a dry run first. Start and undo operations in the Duplicates tab."),
-      cards.length ? cards : h("p", "No pending reviews. Choose duplicate groups in Duplicates."));
+      cards.length ? cards : h("p", "No pending reviews. Choose photos in Duplicates or Likely accidents."));
   }
   await load();
 }
