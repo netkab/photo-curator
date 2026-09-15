@@ -108,3 +108,11 @@ frontend build and npm audit. It is not active. Creation at `.github/workflows/c
 by the connected GitHub integration (403, resource not accessible by integration). The available CLI
 credential also did not advertise workflow-write scope. A credential with workflow permissions can
 copy this template to `.github/workflows/cleanup.yml` and push it to activate CI.
+
+## 3.1.0 — likely accidental bursts
+
+- Backend: 47 tests passed; extension: 15 tests passed. Frontend production build passed.
+- Added checks for signal detection, burst caps, ownership changes before review, explicit pending review with no operation, dry-run default, protected survivors, persistent ignore, cancellation, stale group IDs, and preventing selection of existing review keepers.
+- Installed backend processed 10,423 owned photos from the existing catalog in approximately 14 seconds: one pending suggestion, two unavailable previews and two missing dates. This verifies execution, not classification accuracy. No selection, approval or live trash was performed by this validation.
+- Uses cached thumbnails only; no new model downloads or external image uploads. Thresholds are conservative heuristics and have not been calibrated against a labeled personal-photo dataset.
+- Native Chrome visual inspection/reload was interrupted by concurrent user activity. Visual layout and manual browser interaction for the new tab remain unverified. The mechanical UI detector reported only the existing progress-bar width transition, outside the new surface.

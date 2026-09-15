@@ -75,3 +75,11 @@ def test_ownership_rechecked_at_review(client):
     with session_scope() as s:
         s.query(GpItem).filter(GpItem.media_id==ids[0]).one().is_owned=None
     assert client.post(f'/api/accidents/{gid}/review',json={'media_ids':[ids[0]]}).status_code==409
+
+def test_existing_review_keeper_cannot_be_selected(client):
+    ids=seed();analyze(Handle())
+    gid=client.get('/api/accidents').json()['groups'][0]['id']
+    with session_scope() as s:
+        s.add(ReviewAction(kind='delete',payload=json.dumps({'keeper_media_id':ids[0],'items':[]})))
+    assert client.post(f'/api/accidents/{gid}/review',json={'media_ids':[ids[0]]}).status_code==409
+    assert analyze(Handle())['groups']==0

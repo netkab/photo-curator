@@ -82,6 +82,8 @@ def analyze(handle):
         positions = {x['id']: i for i, x in enumerate(timeline)}
         drafts = []
         for burst in bursts:
+            if any(x['id'] in excluded for x in burst):
+                continue
             # Nearby context is never selected automatically, and remains protected in reviews.
             lo, hi = positions[burst[0]['id']], positions[burst[-1]['id']]
             context = [x for x in timeline[max(0, lo-2):hi+3] if x not in burst

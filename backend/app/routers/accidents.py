@@ -63,6 +63,14 @@ def review(gid: int, body: Selection, db: Session = Depends(db_dependency)):
     selected = set(body.media_ids)
     if not selected <= members:
         raise HTTPException(400, 'Only photos in this burst may be selected')
+    for previous in db.query(ReviewAction).filter(ReviewAction.kind == 'delete', ReviewAction.status != 'dismissed'):
+        prior = json.loads(previous.payload)
+        reserved = {i['media_id'] for i in prior.get('items', [])}
+        reserved.update(prior.get('kept_media_ids', []))
+        reserved.update(i.get('keeper_media_id') for i in prior.get('items', []))
+        reserved.add(prior.get('keeper_media_id'))
+        if selected & reserved:
+            raise HTTPException(409, 'A selected photo is already part of another review; keep it or run analysis again')
     kept = (members | set(p['context_ids'])) - selected
     live = {x.media_id for x in db.query(GpItem).filter(GpItem.media_id.in_(members | kept), GpItem.trashed.is_(False))}
     if not selected <= live:
