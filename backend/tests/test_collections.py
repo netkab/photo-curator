@@ -91,3 +91,15 @@ def test_temporary_partial_selection_protects_unselected(client):
     r=client.post(f'/api/accidents/{gid}/review',json={'media_ids':ids[:2],'preview':True})
     assert r.status_code==200
     assert r.json()['protected_keys']==['k2']
+
+def test_live_temporary_select_all_can_reach_batch_and_undo(client):
+    gid,ids=seed()
+    a=client.post(f'/api/accidents/{gid}/review',json={'media_ids':ids}).json()['action_id']
+    assert client.post(f'/api/review/{a}/approve').status_code==200
+    settings.live_trash_enabled=True
+    r=client.post(f'/api/review/{a}/apply',json={'dry_run':False})
+    assert r.status_code==200,r.text
+    oid=r.json()['result']['operation_id']
+    r=client.get(f'/api/gp/operations/{oid}/next?account=stable')
+    assert r.status_code==200,r.text
+    assert r.json()['batch']==['k0']

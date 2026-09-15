@@ -269,7 +269,8 @@ def validate_trash(db: Session, action_id: int | None, account: str, keys: list[
     if not keys or not set(keys).issubset(snapshot.get("approved_keys", [])):
         raise HTTPException(409, "Operation contains keys outside the reviewed selection")
     protected = set(snapshot.get("protected_keys", []))
-    if not protected or set(keys) & protected:
+    from .review import temporary_without_keeper
+    if (not protected and not temporary_without_keeper(db, snapshot)) or set(keys) & protected:
         raise HTTPException(409, "Operation conflicts with a protected keeper")
     live_keepers = {k for (k,) in db.query(GpItem.dedup_key).filter(GpItem.account == account,
                        GpItem.dedup_key.in_(protected), GpItem.trashed.is_(False)).all()}

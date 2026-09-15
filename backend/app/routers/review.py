@@ -41,6 +41,15 @@ def _get(db: Session, action_id: int) -> ReviewAction:
     return a
 
 
+def temporary_without_keeper(db: Session, payload: dict) -> bool:
+    """Only a stored temporary group can omit a keeper; never trust a payload flag alone."""
+    gid = payload.get('accident_group_id')
+    group = db.get(AccidentGroup, gid) if gid else None
+    members = {x['media_id'] for x in json.loads(group.payload)['members']} if group else set()
+    return bool(group and group.category == 'temporary' and payload.get('cleanup_category') == 'temporary'
+                and {i['media_id'] for i in payload.get('items', [])} == members and members)
+
+
 def reviewed_targets(db: Session, a: ReviewAction) -> tuple[str, list[str], list[str]]:
     """Resolve only reviewed members, protecting every keeper by content key across groups."""
     if a.kind != "delete":
@@ -50,14 +59,8 @@ def reviewed_targets(db: Session, a: ReviewAction) -> tuple[str, list[str], list
     keeper_ids = {payload.get("keeper_media_id")} | {i.get("keeper_media_id") for i in items}
     keeper_ids.update(payload.get("kept_media_ids", []))
     keeper_ids.discard(None)
-    if not keeper_ids:
-        # Standalone temporary references have no duplicate keeper. Only a catalog-backed
-        # temporary group can use this path; a payload flag cannot disable keeper protection.
-        group = db.get(AccidentGroup, payload.get('accident_group_id')) if payload.get('accident_group_id') else None
-        members = {x['media_id'] for x in json.loads(group.payload)['members']} if group else set()
-        if not (group and group.category == 'temporary' and payload.get('cleanup_category') == 'temporary'
-                and {i['media_id'] for i in items} == members and members):
-            raise HTTPException(409, "Cleanup requires a surviving keeper")
+    if not keeper_ids and not temporary_without_keeper(db, payload):
+        raise HTTPException(409, "Cleanup requires a surviving keeper")
     ids = {i["media_id"] for i in items} - keeper_ids
     rows = db.query(GpItem).filter(GpItem.media_id.in_(ids | keeper_ids)).all()
     accounts = {g.account for g in rows}
