@@ -1,5 +1,6 @@
 """Accidental bursts use the same ownership, keeper, approval and reversible trash gates."""
 import json
+from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -11,12 +12,16 @@ from .review import reviewed_targets
 
 router = APIRouter(prefix='/api/accidents', tags=['accidents'])
 
+class AnalyzeBody(BaseModel):
+    sensitivity: Literal['conservative', 'broad', 'very-broad'] = 'broad'
+
 @router.post('/analyze')
 @serialized
-def analyze():
+def analyze(body: AnalyzeBody | None = None):
     if manager.is_running('accident-analysis'):
         raise HTTPException(409, 'Accident analysis is already running')
-    return manager.submit('accident-analysis', accidents.analyze).to_dict()
+    sensitivity = (body or AnalyzeBody()).sensitivity
+    return manager.submit('accident-analysis', lambda h: accidents.analyze(h, sensitivity)).to_dict()
 
 @router.get('')
 def groups(after: int = Query(0, ge=0), limit: int = Query(10, ge=1, le=25), db: Session = Depends(db_dependency)):

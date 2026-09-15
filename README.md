@@ -188,9 +188,9 @@ not loaded; a small adapter retains just the required request formats and licens
 See [SECURITY.md](SECURITY.md) for the trust boundary and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
 for upstream credits. Existing legacy guides are historical and are not setup instructions for this fork.
 
-### Likely accidents (extension 3.1.0)
+### Likely accidents (extension 3.1.1)
 
-After downloading previews in Library Sync, open **Likely accidents** and choose **Find likely accidents**. No CLIP model or Takeout is needed. This local pass considers only live photos marked as owned. It groups shots at most 12 seconds apart, capped at 90 seconds and 25 photos. A suggestion needs at least three dark, low-detail or possibly blurry previews making up 60% of the burst. Up to two neighboring photos on each side within five minutes provide context.
+After downloading previews in Library Sync, open **Likely accidents** and choose **Find likely accidents**. No CLIP model or Takeout is needed. This local pass considers only live photos marked as owned. Sensitivity defaults to **Broad**: shots up to 30 seconds apart, capped at three minutes and 25 photos, with at least two flagged previews making up 25% of the burst. **Conservative** retains the original stricter settings (12-second gaps, 90-second span, three flags and 60%). **Very broad** allows 45-second gaps, four-minute spans and two flags making up 15%. Broad and Very broad also relax the darkness, detail and blur thresholds. All are review suggestions, not automatic deletion decisions. Up to two neighboring photos on each side within five minutes provide context.
 
 Nothing is preselected. Inspect the original in Google Photos, select unwanted burst photos, then send the selection to the Review queue. Unselected burst photos and nearby context are protected; at least one surviving photo is required. Approval, dry run, live-trash opt-in and Undo use the existing review flow. **Keep this burst** persistently hides that burst, including overlapping suggestions on later runs. No automatic trash occurs.
 

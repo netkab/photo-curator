@@ -2,6 +2,10 @@ import {h, render, send, fmtDate} from '../../lib/dom.js';
 export async function accidentsTab(root, {api, toast}) {
   let disposed = false, timer, jobId, after = 0, busy = false;
   const status = h('p', {role: 'status', 'aria-live': 'polite'}, 'Uses cached previews of photos you own. No CLIP model needed.');
+  const sensitivity = h('select', {id: 'accident-sensitivity'},
+    h('option', {value: 'conservative'}, 'Conservative'),
+    h('option', {value: 'broad', selected: true}, 'Broad — recommended'),
+    h('option', {value: 'very-broad'}, 'Very broad'));
   const list = h('div.groups');
   const run = h('button.primary', {onclick: start}, 'Find likely accidents');
   const stop = h('button', {hidden: true, onclick: async () => {
@@ -17,7 +21,7 @@ export async function accidentsTab(root, {api, toast}) {
       if (disposed) return;
       status.textContent = j.message || 'Checking cached previews…';
       if (j.status === 'running') { timer = setTimeout(poll, 1500); return; }
-      run.disabled = false; stop.hidden = true;
+      run.disabled = false; sensitivity.disabled = false; stop.hidden = true;
       if (j.status === 'error') status.textContent = `Analysis failed: ${(j.error || '').split('\n')[0]}. Your previous suggestions remain available.`;
       else if (j.status === 'cancelled') status.textContent = 'Analysis stopped. Previous suggestions are unchanged.';
       else {
@@ -25,12 +29,12 @@ export async function accidentsTab(root, {api, toast}) {
         status.textContent = `${r.groups} possible accidental bursts. ${r.unavailable} previews unavailable; ${r.without_date} photos have no date. Retry missing previews in Library Sync, then analyze again.`;
       }
       await load();
-    } catch (e) { showError(e); run.disabled = false; stop.hidden = true; }
+    } catch (e) { showError(e); run.disabled = false; sensitivity.disabled = false; stop.hidden = true; }
   }
   async function start() {
-    run.disabled = true;
-    try { const j = await api.post('/api/accidents/analyze'); jobId = j.id; stop.hidden = false; await poll(); }
-    catch (e) { showError(e); run.disabled = false; }
+    run.disabled = true; sensitivity.disabled = true;
+    try { const j = await api.post('/api/accidents/analyze', {sensitivity: sensitivity.value}); jobId = j.id; stop.hidden = false; await poll(); }
+    catch (e) { showError(e); run.disabled = false; sensitivity.disabled = false; }
   }
   function card(g) {
     const selected = new Set();
@@ -85,9 +89,10 @@ export async function accidentsTab(root, {api, toast}) {
   render(root, h('h1', 'Likely accidents'),
     h('p', 'Review runs of dark, low-detail or possibly blurry photos taken seconds apart. Intentional night shots and soft backgrounds can also appear here.'),
     h('p', 'These are small previews. Inspect photos in Google Photos before deciding; this does not judge the original’s sharpness.'),
-    h('div.row', run, stop), status, list, next);
+    h('div.row', h('label', {htmlFor: 'accident-sensitivity'}, 'Sensitivity'), sensitivity, run, stop),
+    h('p.sub', 'Broad includes more borderline photos and shorter bursts. Very broad casts a wider net; expect more intentional photos. Nothing is selected for you.'), status, list, next);
   await load();
   const active = (await api.get('/api/jobs')).find(j => j.name === 'accident-analysis' && j.status === 'running');
-  if (active) {jobId = active.id; run.disabled = true; stop.hidden = false; poll();}
+  if (active) {jobId = active.id; run.disabled = true; sensitivity.disabled = true; stop.hidden = false; poll();}
   return () => {disposed = true; clearTimeout(timer);};
 }

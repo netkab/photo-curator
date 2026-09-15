@@ -26,15 +26,16 @@ def seed():
 def test_signals_and_burst_limits(tmp_path):
     p=tmp_path/'x.png'
     Image.new('L',(64,64),0).save(p)
-    assert 'Almost entirely dark' in preview_signals(p)
+    assert 'Dark preview' in preview_signals(p)
     Image.fromarray(np.random.default_rng(1).integers(0,256,(64,64),dtype=np.uint8)).save(p)
     assert preview_signals(p)==[]
     t=datetime(2020,1,1)
     rows=[dict(id=i,account='a',time=t+timedelta(seconds=i*2),reasons=['dark']) for i in range(30)]
     assert [len(g) for g in find_bursts(rows)]==[25,5]
-    assert not find_bursts(rows[:2])
+    assert not find_bursts(rows[:2], 'conservative')
+    assert len(find_bursts(rows[:2])) == 1
     rows[2]['account']='b'
-    assert not find_bursts(rows[:3])
+    assert [[x['id'] for x in g] for g in find_bursts(rows[:3])] == [[0, 1]]
 
 def test_owned_review_only_and_protection(client):
     ids=seed()
@@ -83,3 +84,13 @@ def test_existing_review_keeper_cannot_be_selected(client):
         s.add(ReviewAction(kind='delete',payload=json.dumps({'keeper_media_id':ids[0],'items':[]})))
     assert client.post(f'/api/accidents/{gid}/review',json={'media_ids':[ids[0]]}).status_code==409
     assert analyze(Handle())['groups']==0
+
+def test_broad_includes_borderline_previews_and_sparse_bursts(tmp_path, client):
+    p=tmp_path/'gradient.png'
+    Image.fromarray(np.tile(np.linspace(10,150,128,dtype=np.uint8),(128,1))).save(p)
+    assert 'Possibly blurry' in preview_signals(p, 'broad')
+    t=datetime(2020,1,1)
+    rows=[dict(id=i,account='a',time=t+timedelta(seconds=i*20),reasons=['blur'] if i<2 else []) for i in range(6)]
+    assert not find_bursts(rows, 'conservative')
+    assert len(find_bursts(rows, 'broad'))==1
+    assert client.post('/api/accidents/analyze',json={'sensitivity':'invalid'}).status_code==422

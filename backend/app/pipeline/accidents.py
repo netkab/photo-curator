@@ -10,7 +10,15 @@ from ..db import session_scope, mutation_lock
 from ..models import Media, GpItem, AccidentGroup, ReviewAction
 
 
-def preview_signals(path):
+PROFILES = {
+    'conservative': dict(dark=24, contrast=7, edge=1.8, gap=12, duration=90, minimum=3, fraction=.6),
+    'broad': dict(dark=65, contrast=18, edge=5, gap=30, duration=180, minimum=2, fraction=.25),
+    'very-broad': dict(dark=90, contrast=26, edge=8, gap=45, duration=240, minimum=2, fraction=.15),
+}
+
+
+def preview_signals(path, sensitivity='broad'):
+    profile = PROFILES[sensitivity]
     with Image.open(path) as im:
         im = im.convert('L')
         im.thumbnail((256, 256))
@@ -18,32 +26,35 @@ def preview_signals(path):
     contrast = float(a.std())
     edge = float((np.abs(np.diff(a, axis=0)).mean() + np.abs(np.diff(a, axis=1)).mean()) / 2)
     reasons = []
-    if float(np.quantile(a, .95)) < 24:
-        reasons.append('Almost entirely dark')
-    if contrast < 7:
+    if float(np.quantile(a, .95)) < profile['dark']:
+        reasons.append('Dark preview')
+    if contrast < profile['contrast']:
         reasons.append('Very little visible detail')
-    if edge < 1.8 and contrast >= 7:
-        reasons.append('Possibly very blurry')
+    if edge < profile['edge'] and contrast >= profile['contrast']:
+        reasons.append('Possibly blurry')
     return reasons
 
 
-def find_bursts(rows):
+def find_bursts(rows, sensitivity='broad'):
     """Rows sorted by account/time; cap duration and size so chains cannot swallow an event."""
+    profile = PROFILES[sensitivity]
     runs, run = [], []
     for row in rows:
         if run and (row['account'] != run[-1]['account'] or
-                    (row['time'] - run[-1]['time']).total_seconds() > 12 or
-                    (row['time'] - run[0]['time']).total_seconds() > 90 or len(run) >= 25):
+                    (row['time'] - run[-1]['time']).total_seconds() > profile['gap'] or
+                    (row['time'] - run[0]['time']).total_seconds() > profile['duration'] or len(run) >= 25):
             runs.append(run)
             run = []
         run.append(row)
     if run:
         runs.append(run)
-    return [r for r in runs if sum(bool(x['reasons']) for x in r) >= 3
-            and sum(bool(x['reasons']) for x in r) / len(r) >= .6]
+    return [r for r in runs if sum(bool(x['reasons']) for x in r) >= profile['minimum']
+            and sum(bool(x['reasons']) for x in r) / len(r) >= profile['fraction']]
 
 
-def analyze(handle):
+def analyze(handle, sensitivity='broad'):
+    if sensitivity not in PROFILES:
+        raise ValueError('Unknown sensitivity')
     with session_scope() as s:
         rows = s.query(Media, GpItem).join(GpItem, GpItem.media_id == Media.id).filter(
             Media.source == 'google-photos-thumbnail', Media.media_type == 'photo',
@@ -70,7 +81,7 @@ def analyze(handle):
             path = settings.thumbs_dir / m.thumb_path if m.thumb_path else None
             if path and path.is_file() and m.id not in excluded:
                 try:
-                    reasons = preview_signals(path)
+                    reasons = preview_signals(path, sensitivity)
                 except (OSError, ValueError):
                     missing += 1
             elif m.id not in excluded:
@@ -78,7 +89,7 @@ def analyze(handle):
             timeline.append(dict(id=m.id, account=g.account, time=m.taken_at, reasons=reasons))
             if n % 100 == 0:
                 handle.update(n / max(len(rows), 1), f'Checking cached previews: {n:,} / {len(rows):,}')
-        bursts = find_bursts(timeline)
+        bursts = find_bursts(timeline, sensitivity)
         positions = {x['id']: i for i, x in enumerate(timeline)}
         drafts = []
         for burst in bursts:
@@ -108,4 +119,4 @@ def analyze(handle):
                 continue
             s.add(AccidentGroup(fingerprint=fingerprint, payload=json.dumps(payload)))
             count += 1
-    return {'groups': count, 'checked': len(seen), 'unavailable': missing, 'without_date': no_date}
+    return {'sensitivity': sensitivity, 'groups': count, 'checked': len(seen), 'unavailable': missing, 'without_date': no_date}
