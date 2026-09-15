@@ -302,6 +302,15 @@ class AccidentGroup(Base):
     __tablename__ = 'accident_groups'
     __table_args__ = {'sqlite_autoincrement': True}
     id: Mapped[int] = mapped_column(primary_key=True)
+    category: Mapped[str] = mapped_column(String, default='accidents', index=True)
     fingerprint: Mapped[str] = mapped_column(String(64), unique=True)
     payload: Mapped[str] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String, default='pending')
+
+
+class PreviewClassification(Base):
+    """Only labels are retained; recognized private text is discarded after classification."""
+    __tablename__ = 'preview_classifications'
+    media_id: Mapped[int] = mapped_column(ForeignKey('media.id'), primary_key=True)
+    signature: Mapped[str] = mapped_column(String)
+    labels: Mapped[str] = mapped_column(Text)

@@ -110,9 +110,9 @@ def analyze(handle, sensitivity='broad'):
     with mutation_lock, session_scope() as s:
         # Preserve reviewed/ignored results and suppress their photos even if burst boundaries change.
         handled = set()
-        for g in s.query(AccidentGroup).filter(AccidentGroup.status != 'pending'):
+        for g in s.query(AccidentGroup).filter(AccidentGroup.category == 'accidents', AccidentGroup.status != 'pending'):
             handled.update(x['media_id'] for x in json.loads(g.payload)['members'])
-        s.query(AccidentGroup).filter(AccidentGroup.status == 'pending').delete()
+        s.query(AccidentGroup).filter(AccidentGroup.category == 'accidents', AccidentGroup.status == 'pending').delete()
         count = 0
         for fingerprint, payload in drafts:
             if any(x['media_id'] in handled for x in payload['members']):

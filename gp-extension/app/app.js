@@ -20,6 +20,8 @@ const TABS = [
   { id: "sync", label: "Library Sync", render: syncTab },
   { id: "dupes", label: "Duplicates", render: dupesTab },
   { id: "accidents", label: "Likely accidents", render: accidentsTab },
+  { id: "temporary", label: "Temporary photos", render: (root, ctx) => accidentsTab(root, ctx, "temporary") },
+  { id: "attempts", label: "Repeated attempts", render: (root, ctx) => accidentsTab(root, ctx, "attempts") },
   { id: "review", label: "Review queue", render: reviewTab },
 ];
 

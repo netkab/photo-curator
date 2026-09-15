@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from ..config import settings
 from ..db import db_dependency, serialized
-from ..models import Caption, DerivedMedia, GpItem, GpOperation, Media, ReviewAction
+from ..models import AccidentGroup, Caption, DerivedMedia, GpItem, GpOperation, Media, ReviewAction
 
 
 router = APIRouter(prefix="/api/review", tags=["review"])
@@ -51,7 +51,13 @@ def reviewed_targets(db: Session, a: ReviewAction) -> tuple[str, list[str], list
     keeper_ids.update(payload.get("kept_media_ids", []))
     keeper_ids.discard(None)
     if not keeper_ids:
-        raise HTTPException(409, "Cleanup requires a surviving keeper")
+        # Standalone temporary references have no duplicate keeper. Only a catalog-backed
+        # temporary group can use this path; a payload flag cannot disable keeper protection.
+        group = db.get(AccidentGroup, payload.get('accident_group_id')) if payload.get('accident_group_id') else None
+        members = {x['media_id'] for x in json.loads(group.payload)['members']} if group else set()
+        if not (group and group.category == 'temporary' and payload.get('cleanup_category') == 'temporary'
+                and {i['media_id'] for i in items} == members and members):
+            raise HTTPException(409, "Cleanup requires a surviving keeper")
     ids = {i["media_id"] for i in items} - keeper_ids
     rows = db.query(GpItem).filter(GpItem.media_id.in_(ids | keeper_ids)).all()
     accounts = {g.account for g in rows}
@@ -148,7 +154,7 @@ def apply(action_id: int, body: ApplyBody | None = None, db: Session = Depends(d
     from .gp import CreateOpBody, create_operation
     op = create_operation(CreateOpBody(op="trash", account=payload.get("approved_account", ""),
                           keys=payload.get("approved_keys", []), review_action_id=a.id,
-                          dry_run=body.dry_run, note=f"{'Accident cleanup' if payload.get('accident_group_id') else 'Reviewed photos'} — action {a.id}"), db)
+                          dry_run=body.dry_run, note=f"{ {'accidents': 'Accident cleanup', 'temporary': 'Temporary photos', 'attempts': 'Repeated attempts'}.get(payload.get('cleanup_category'), 'Accident cleanup' if payload.get('accident_group_id') else 'Reviewed photos')} — action {a.id}"), db)
     return {"id": a.id, "status": a.status,
             "result": {"operation_id": op["id"], "mode": "extension", "dry_run": body.dry_run}}
 

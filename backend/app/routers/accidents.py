@@ -7,25 +7,32 @@ from sqlalchemy.orm import Session
 from ..db import db_dependency, serialized
 from ..models import AccidentGroup, Media, GpItem, ReviewAction
 from ..jobs import manager
-from ..pipeline import accidents
+from ..pipeline import accidents, collections
 from .review import reviewed_targets
 
 router = APIRouter(prefix='/api/accidents', tags=['accidents'])
 
 class AnalyzeBody(BaseModel):
+    category: Literal['accidents', 'temporary', 'attempts'] = 'accidents'
     sensitivity: Literal['conservative', 'broad', 'very-broad'] = 'broad'
 
 @router.post('/analyze')
 @serialized
 def analyze(body: AnalyzeBody | None = None):
-    if manager.is_running('accident-analysis'):
-        raise HTTPException(409, 'Accident analysis is already running')
-    sensitivity = (body or AnalyzeBody()).sensitivity
-    return manager.submit('accident-analysis', lambda h: accidents.analyze(h, sensitivity)).to_dict()
+    body = body or AnalyzeBody()
+    job_name = 'accident-analysis' if body.category == 'accidents' else f'{body.category}-analysis'
+    if manager.is_running(job_name):
+        raise HTTPException(409, 'This analysis is already running')
+    target = (lambda h: accidents.analyze(h, body.sensitivity)) if body.category == 'accidents' else (lambda h: collections.analyze(h, body.category, body.sensitivity))
+    return manager.submit(job_name, target).to_dict()
 
 @router.get('')
-def groups(after: int = Query(0, ge=0), limit: int = Query(10, ge=1, le=25), db: Session = Depends(db_dependency)):
-    rows = db.query(AccidentGroup).filter(AccidentGroup.status == 'pending', AccidentGroup.id > after).order_by(AccidentGroup.id).limit(limit + 1).all()
+def groups(category: Literal['accidents', 'temporary', 'attempts'] = 'accidents', label: str | None = None, after: int = Query(0, ge=0), limit: int = Query(10, ge=1, le=25), db: Session = Depends(db_dependency)):
+    query = db.query(AccidentGroup).filter(AccidentGroup.category == category, AccidentGroup.status == 'pending', AccidentGroup.id > after)
+    if label:
+        from sqlalchemy import func
+        query = query.filter(func.json_extract(AccidentGroup.payload, '$.label') == label)
+    rows = query.order_by(AccidentGroup.id).limit(limit + 1).all()
     out = []
     for g in rows[:limit]:
         p = json.loads(g.payload)
@@ -39,7 +46,7 @@ def groups(after: int = Query(0, ge=0), limit: int = Query(10, ge=1, le=25), db:
                                'thumb': f'/media/thumbs/{m.thumb_path}' if m.thumb_path else None,
                                'reasons': reasons.get(mid, []), 'context': mid not in reasons,
                                'product_url': f'https://photos.google.com/photo/{live.media_key}'})
-        out.append({'id': g.id, 'taken_at': p['taken_at'], 'photos': photos})
+        out.append({'id': g.id, 'category': g.category, 'title': p.get('title', 'Burst'), 'keeper_id': p.get('keeper_id'), 'taken_at': p['taken_at'], 'photos': photos})
     return {'groups': out, 'more': len(rows) > limit}
 
 def get_group(db, gid):
@@ -82,9 +89,9 @@ def review(gid: int, body: Selection, db: Session = Depends(db_dependency)):
     if not selected <= live:
         raise HTTPException(409, 'A selected photo is no longer present; run analysis again')
     kept &= live
-    if not kept:
+    if not kept and g.category != 'temporary':
         raise HTTPException(409, 'Keep at least one photo from this burst for the protected review')
-    a = ReviewAction(kind='delete', payload=json.dumps({'reason': 'Possible accidental burst — selected by you',
+    a = ReviewAction(kind='delete', payload=json.dumps({'reason': {'accidents': 'Possible accidental burst', 'temporary': 'Temporary photo candidate', 'attempts': 'Repeated attempts'}[g.category] + ' — selected by you', 'cleanup_category': g.category,
         'accident_group_id': gid, 'kept_media_ids': sorted(kept),
         'items': [{'media_id': mid} for mid in sorted(selected)]}))
     account, keys, protected = reviewed_targets(db, a)

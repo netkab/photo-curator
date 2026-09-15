@@ -10,7 +10,7 @@ export async function trashAccident({api, send, confirm, group, mediaIds, dryRun
   }
   const result = await api.post(`/api/accidents/${group.id}/review`, {media_ids: mediaIds, preview: dryRun});
   if (dryRun) return api.createOperation({op: 'trash', account: result.account, keys: result.keys,
-    dry_run: true, note: 'Accident preview — no photos changed'});
+    dry_run: true, note: `${group.category === 'temporary' ? 'Temporary photos' : group.category === 'attempts' ? 'Repeated attempts' : 'Accident'} preview — no photos changed`});
   try {
     await api.approveAction(result.action_id);
     const applied = await api.applyAction(result.action_id, false);

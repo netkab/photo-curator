@@ -26,6 +26,7 @@ def _migrate() -> None:
     ``ALTER TABLE ... ADD COLUMN``; we guard each with a PRAGMA check so it's safe every startup.
     """
     adds = {
+        "accident_groups": {"category": "TEXT DEFAULT 'accidents'"},
         "place_clusters": {"manual": "INTEGER DEFAULT 0", "reviewed": "INTEGER DEFAULT 0"},
         "media": {
             "source": "TEXT DEFAULT 'takeout'",
