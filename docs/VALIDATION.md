@@ -120,3 +120,11 @@ copy this template to `.github/workflows/cleanup.yml` and push it to activate CI
 ## 3.1.2 — direct trash from accidental bursts
 
 49 backend tests and 19 extension tests pass. New coverage checks dry-run selection validation without consuming groups or creating reviews, cancellation before any write, unavailable Google Photos before any write, and the confirmed review/approve/live-apply sequence. JavaScript syntax checks and UI detector pass. No actual photo trash or restore was executed as a test. Native UI visual verification remains outstanding.
+
+## 3.2.0 — temporary photos and repeated attempts
+
+- 57 backend tests and 19 extension tests pass. Covers category isolation, label-cache reuse, document labeling priority, time/account/content matching constraints, partial selection protection, and catalog-backed keeperless temporary reviews through live-enabled batch issuance and Undo. Tests simulate backend outcomes and never call Google mutations.
+- Apple's local Vision helper compiled successfully and recognized a generated delivery-update image. The helper requires macOS recognition services (sandbox-only execution could not access them). The installed backend ran it successfully outside the development sandbox.
+- Live cached-library analysis: 9,624 eligible owned photos; repeated attempts yielded 1,746 groups (two unavailable previews, one missing date). Temporary analysis labeled 69 candidates in 44 category/month groups (two unavailable previews). Classification accuracy has not been validated against human labels.
+- Synthetic fixture inspected in the in-app browser: temporary category filters, preview tiles, selection and dry-run toggle changing the button to Trash, and repeated-attempt keeper labeling. This checks rendering and selection UI, not an actual Chrome extension trash action. Code review's execution-guard finding was corrected and regression-tested.
+- New collections use no CLIP download. Temporary OCR retains only classification labels and cache signatures, not recognized text. Original-quality comparison, expiration, expressions and personal significance remain user judgments.

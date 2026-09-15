@@ -103,3 +103,9 @@ def test_live_temporary_select_all_can_reach_batch_and_undo(client):
     r=client.get(f'/api/gp/operations/{oid}/next?account=stable')
     assert r.status_code==200,r.text
     assert r.json()['batch']==['k0']
+    assert client.post(f'/api/gp/operations/{oid}/result',json={'cursor':0,'succeeded':['k0']}).status_code==200
+    inverse=client.post(f'/api/gp/operations/{oid}/undo')
+    assert inverse.status_code==200,inverse.text
+    rid=inverse.json()['id']
+    batch=client.get(f'/api/gp/operations/{rid}/next?account=stable')
+    assert batch.status_code==200 and batch.json()['batch']==['k0']
