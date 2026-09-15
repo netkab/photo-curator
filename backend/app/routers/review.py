@@ -41,8 +41,25 @@ def _get(db: Session, action_id: int) -> ReviewAction:
     return a
 
 
-def temporary_without_keeper(db: Session, payload: dict) -> bool:
-    """Only a stored temporary group can omit a keeper; never trust a payload flag alone."""
+def catalog_selection_without_keeper(db: Session, payload: dict) -> bool:
+    """Keeperless reviews require a stored temporary group or explicitly selected whole cleanup groups."""
+    selections = payload.get('cleanup_selections')
+    if selections:
+        all_ids = set()
+        for selection in selections:
+            group = db.get(AccidentGroup, selection.get('group_id'))
+            if not group or group.category != payload.get('cleanup_category'):
+                return False
+            members = {x['media_id'] for x in json.loads(group.payload)['members']}
+            ids = set(selection.get('media_ids', []))
+            if not ids or not ids <= members or not selection.get('allow_all'):
+                return False
+            # An explicitly selected whole group can have no keeper. Do not extend this
+            # exception to an unselected surviving member, even after some batches finish.
+            if db.query(GpItem).filter(GpItem.media_id.in_(members - ids), GpItem.trashed.is_(False)).first():
+                return False
+            all_ids.update(ids)
+        return all_ids == {i['media_id'] for i in payload.get('items', [])}
     gid = payload.get('accident_group_id')
     group = db.get(AccidentGroup, gid) if gid else None
     members = {x['media_id'] for x in json.loads(group.payload)['members']} if group else set()
@@ -59,7 +76,7 @@ def reviewed_targets(db: Session, a: ReviewAction) -> tuple[str, list[str], list
     keeper_ids = {payload.get("keeper_media_id")} | {i.get("keeper_media_id") for i in items}
     keeper_ids.update(payload.get("kept_media_ids", []))
     keeper_ids.discard(None)
-    if not keeper_ids and not temporary_without_keeper(db, payload):
+    if not keeper_ids and not catalog_selection_without_keeper(db, payload):
         raise HTTPException(409, "Cleanup requires a surviving keeper")
     ids = {i["media_id"] for i in items} - keeper_ids
     rows = db.query(GpItem).filter(GpItem.media_id.in_(ids | keeper_ids)).all()

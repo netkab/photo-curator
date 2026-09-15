@@ -28,3 +28,20 @@ test('unreachable Google Photos leaves reviews untouched',async()=>{
  const {args,calls}=setup(false);args.send=async()=>({ok:false});
  await assert.rejects(trashAccident(args));assert.deepEqual(calls,[]);
 });
+
+import {trashCleanupPage} from '../lib/accident-trash.js';
+test('page selection produces one snapshot and one operation after confirmation',async()=>{
+ const {args,calls}=setup(false);
+ const selections=[{group:{id:1,photos:[{id:2,name:'a'},{id:3,name:'b'}]},mediaIds:[2,3]},
+ {group:{id:4,photos:[{id:5,name:'c'},{id:6,name:'keep'}]},mediaIds:[5]}];
+ let confirmation='';
+ await trashCleanupPage({...args,category:'attempts',selections,confirm:text=>{confirmation=text;return true;}});
+ assert.deepEqual(calls.map(x=>x[0]),['review','approve','apply']);
+ assert.deepEqual(calls[0][1].groups,[{group_id:1,media_ids:[2,3],allow_all:true},{group_id:4,media_ids:[5],allow_all:false}]);
+ assert.match(confirmation,/1 entire group/);
+});
+test('cancelled global confirmation makes no writes',async()=>{
+ const {args,calls}=setup(false,false);
+ await trashCleanupPage({...args,category:'accidents',selections:[{group:args.group,mediaIds:[2]}]});
+ assert.deepEqual(calls,[]);
+});

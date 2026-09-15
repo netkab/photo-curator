@@ -64,12 +64,11 @@ def ignore(gid: int, db: Session = Depends(db_dependency)):
     return {'status': 'ignored'}
 
 class Selection(BaseModel):
+    allow_all: bool = False
     preview: bool = False
     media_ids: list[int] = Field(min_length=1, max_length=25)
 
-@router.post('/{gid}/review')
-@serialized
-def review(gid: int, body: Selection, db: Session = Depends(db_dependency)):
+def build_selection(gid: int, body: Selection, db: Session):
     g = get_group(db, gid)
     p = json.loads(g.payload)
     members = {x['media_id'] for x in p['members']}
@@ -89,11 +88,17 @@ def review(gid: int, body: Selection, db: Session = Depends(db_dependency)):
     if not selected <= live:
         raise HTTPException(409, 'A selected photo is no longer present; run analysis again')
     kept &= live
-    if not kept and g.category != 'temporary':
+    if not kept and g.category != 'temporary' and not (body.allow_all and selected == (members & live)):
         raise HTTPException(409, 'Keep at least one photo from this burst for the protected review')
     a = ReviewAction(kind='delete', payload=json.dumps({'reason': {'accidents': 'Possible accidental burst', 'temporary': 'Temporary photo candidate', 'attempts': 'Repeated attempts'}[g.category] + ' — selected by you', 'cleanup_category': g.category,
         'accident_group_id': gid, 'kept_media_ids': sorted(kept),
         'items': [{'media_id': mid} for mid in sorted(selected)]}))
+    return g, a
+
+@router.post('/{gid}/review')
+@serialized
+def review(gid: int, body: Selection, db: Session = Depends(db_dependency)):
+    g, a = build_selection(gid, body, db)
     account, keys, protected = reviewed_targets(db, a)
     if body.preview:
         return {'account': account, 'keys': keys, 'protected_keys': protected}
@@ -102,3 +107,47 @@ def review(gid: int, body: Selection, db: Session = Depends(db_dependency)):
     g.status = 'reviewed'
     db.commit()
     return {'action_id': a.id, 'status': 'pending'}
+
+
+class GroupSelection(Selection):
+    group_id: int
+
+class BulkSelection(BaseModel):
+    category: Literal['accidents', 'temporary', 'attempts']
+    preview: bool = True
+    groups: list[GroupSelection] = Field(min_length=1, max_length=100)
+
+@router.post('/review-bulk')
+@serialized
+def review_bulk(body: BulkSelection, db: Session = Depends(db_dependency)):
+    if len({x.group_id for x in body.groups}) != len(body.groups):
+        raise HTTPException(400, 'A group may only appear once')
+    groups, selected, kept, snapshots = [], set(), set(), []
+    unselected_members = set()
+    for selection in body.groups:
+        group, action = build_selection(selection.group_id, selection, db)
+        if group.category != body.category:
+            raise HTTPException(400, 'Selection must belong to this tab')
+        payload = json.loads(action.payload)
+        ids = {x['media_id'] for x in payload['items']}
+        selected.update(ids)
+        unselected_members.update({x['media_id'] for x in json.loads(group.payload)['members']} - ids)
+        kept.update(payload['kept_media_ids'])
+        snapshots.append({'group_id': group.id, 'media_ids': sorted(ids), 'allow_all': selection.allow_all})
+        groups.append(group)
+    if selected & unselected_members:
+        raise HTTPException(409, 'A selected photo is unselected in another group. Adjust the selection.')
+    # Nearby context may itself be explicitly selected as a member of another included group.
+    kept.difference_update(selected)
+    payload = {'reason': 'Selected cleanup photos — page selection', 'cleanup_category': body.category,
+               'cleanup_selections': snapshots, 'kept_media_ids': sorted(kept),
+               'items': [{'media_id': mid} for mid in sorted(selected)]}
+    action = ReviewAction(kind='delete', payload=json.dumps(payload))
+    account, keys, protected = reviewed_targets(db, action)
+    if body.preview:
+        return {'account': account, 'keys': keys, 'protected_keys': protected}
+    db.add(action)
+    for group in groups:
+        group.status = 'reviewed'
+    db.commit()
+    return {'action_id': action.id, 'status': 'pending', 'selected': len(keys)}

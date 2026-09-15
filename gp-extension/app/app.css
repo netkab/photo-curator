@@ -231,3 +231,7 @@ form button { justify-self: start; }
   .topbar { height: auto; flex-wrap: wrap; padding: 12px; gap: 12px; }
   .tabs { flex-wrap: wrap; }
 }
+
+.cleanup-actions { position: sticky; top: var(--cleanup-header-height, 56px); z-index: 9; padding: 12px; margin: 12px 0; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+.operation-history { max-height: 260px; overflow-y: auto; margin-top: 12px; }
+.operation-history > .row { padding: 8px 0; border-top: 1px solid var(--line); }

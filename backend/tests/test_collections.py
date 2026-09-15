@@ -109,3 +109,64 @@ def test_live_temporary_select_all_can_reach_batch_and_undo(client):
     rid=inverse.json()['id']
     batch=client.get(f'/api/gp/operations/{rid}/next?account=stable')
     assert batch.status_code==200 and batch.json()['batch']==['k0']
+
+def test_bulk_full_attempt_group_reaches_live_batch(client):
+    gid,ids=seed('attempts',3)
+    body={'category':'attempts','preview':False,'groups':[{'group_id':gid,'media_ids':ids,'allow_all':True}]}
+    r=client.post('/api/accidents/review-bulk',json=body)
+    assert r.status_code==200,r.text
+    aid=r.json()['action_id']
+    assert client.post(f'/api/review/{aid}/approve').status_code==200
+    settings.live_trash_enabled=True
+    r=client.post(f'/api/review/{aid}/apply',json={'dry_run':False})
+    assert r.status_code==200,r.text
+    oid=r.json()['result']['operation_id']
+    assert set(client.get(f'/api/gp/operations/{oid}/next?account=stable').json()['batch'])=={'k0','k1','k2'}
+
+def test_bulk_full_group_requires_explicit_flag(client):
+    gid,ids=seed('accidents',2)
+    r=client.post('/api/accidents/review-bulk',json={'category':'accidents','preview':False,'groups':[{'group_id':gid,'media_ids':ids}]})
+    assert r.status_code==409
+    with session_scope() as s: assert s.query(ReviewAction).count()==0
+
+def test_bulk_preview_preserves_groups_and_partial_selection_protects(client):
+    gid,ids=seed('attempts',3)
+    body={'category':'attempts','groups':[{'group_id':gid,'media_ids':ids[:2]}]}
+    r=client.post('/api/accidents/review-bulk',json=body)
+    assert r.status_code==200,r.text
+    assert r.json()['protected_keys']==['k2']
+    with session_scope() as s:
+        assert s.get(AccidentGroup,gid).status=='pending'
+        assert s.query(ReviewAction).count()==0
+    body['groups'].append({'group_id':99999,'media_ids':[99999]})
+    assert client.post('/api/accidents/review-bulk',json={**body,'preview':False}).status_code==409
+    with session_scope() as s:
+        assert s.get(AccidentGroup,gid).status=='pending'
+        assert s.query(ReviewAction).count()==0
+
+def test_two_groups_create_one_atomic_review(client):
+    gid,ids=seed('attempts',3)
+    with session_scope() as s:
+        first=s.get(AccidentGroup,gid)
+        p=json.loads(first.payload);p['members']=p['members'][:2];first.payload=json.dumps(p)
+        second=AccidentGroup(category='attempts',fingerprint='second',payload=json.dumps({'members':[{'media_id':ids[2],'reasons':[]}],'context_ids':[],'taken_at':None}))
+        s.add(second);s.flush();gid2=second.id
+    r=client.post('/api/accidents/review-bulk',json={'category':'attempts','preview':False,'groups':[
+        {'group_id':gid,'media_ids':ids[:2],'allow_all':True},
+        {'group_id':gid2,'media_ids':ids[2:],'allow_all':True}]})
+    assert r.status_code==200,r.text
+    with session_scope() as s:
+        assert s.query(ReviewAction).count()==1
+        assert s.get(AccidentGroup,gid).status==s.get(AccidentGroup,gid2).status=='reviewed'
+
+def test_explicit_selection_overrides_nearby_context_in_included_group(client):
+    gid,ids=seed('accidents',2)
+    with session_scope() as s:
+        first=s.get(AccidentGroup,gid)
+        p=json.loads(first.payload);p['members']=p['members'][:1];p['context_ids']=[ids[1]];first.payload=json.dumps(p)
+        second=AccidentGroup(category='accidents',fingerprint='context-group',payload=json.dumps({'members':[{'media_id':ids[1],'reasons':[]}],'context_ids':[ids[0]],'taken_at':None}))
+        s.add(second);s.flush();gid2=second.id
+    r=client.post('/api/accidents/review-bulk',json={'category':'accidents','groups':[
+        {'group_id':gid,'media_ids':ids[:1],'allow_all':True},{'group_id':gid2,'media_ids':ids[1:],'allow_all':True}]})
+    assert r.status_code==200,r.text
+    assert r.json()['protected_keys']==[]
